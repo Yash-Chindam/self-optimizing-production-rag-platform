@@ -37,6 +37,8 @@ layers and verifies the production container build.
 ## Delivery policy
 
 All changes are made on a branch and delivered by pull request. The CI workflow is the required
-quality gate. Repository branch protection should require the `CI / Python quality and tests`
-`CI / Playwright end-to-end`, and `CI / Container build` checks.
+quality gate. Successful repository-owner and Dependabot pull requests are merged automatically
+after CI while preserving their individual commits. Repository branch protection should require
+the `CI / Python quality and tests`, `CI / Playwright end-to-end`, and `CI / Container build`
+checks.
 
