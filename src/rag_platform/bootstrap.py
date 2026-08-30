@@ -8,9 +8,12 @@ processing and staged index activation on every start.
 from dataclasses import dataclass
 
 from rag_platform.catalog import IndexCatalog
+from rag_platform.context import ContextBuilder
+from rag_platform.graph import CatalogGraphRetriever
 from rag_platform.ingestion import IngestionPipeline
 from rag_platform.models import PipelineConfig, SourceRegistration
 from rag_platform.repository import CatalogChunkRepository
+from rag_platform.rerank import LexicalCrossEncoder
 from rag_platform.retrieval import HybridRetriever
 from rag_platform.service import QueryService
 
@@ -94,8 +97,13 @@ def build_platform(*, seed_demo_sources: bool = True) -> Platform:
     if seed_demo_sources:
         for registration, content in DEMO_SOURCES:
             ingestion.ingest(registration, content)
-    repository = CatalogChunkRepository(catalog)
-    query_service = QueryService(HybridRetriever(repository, config), config)
+    retriever = HybridRetriever(
+        CatalogChunkRepository(catalog),
+        config,
+        graph_retriever=CatalogGraphRetriever(catalog, config.graph_extractor_revision),
+        reranker=LexicalCrossEncoder(revision=config.reranker_revision),
+    )
+    query_service = QueryService(retriever, config, ContextBuilder(config, catalog.chunk))
     return Platform(
         config=config, catalog=catalog, ingestion=ingestion, query_service=query_service
     )
