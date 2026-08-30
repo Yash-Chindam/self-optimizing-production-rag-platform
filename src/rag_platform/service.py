@@ -1,3 +1,4 @@
+from rag_platform.context import ContextBuilder, ContextBundle
 from rag_platform.models import (
     AccessContext,
     AnswerTrace,
@@ -5,25 +6,25 @@ from rag_platform.models import (
     PipelineConfig,
     QueryResponse,
 )
-from rag_platform.retrieval import HybridRetriever, RetrievedChunk
+from rag_platform.retrieval import HybridRetriever, RetrievalResult
 
 
 class QueryService:
-    def __init__(self, retriever: HybridRetriever, config: PipelineConfig) -> None:
+    def __init__(
+        self,
+        retriever: HybridRetriever,
+        config: PipelineConfig,
+        context_builder: ContextBuilder | None = None,
+    ) -> None:
         self._retriever = retriever
         self.config = config
+        self._context = context_builder or ContextBuilder(config)
 
     def answer(self, question: str, access: AccessContext) -> QueryResponse:
         retrieved = self._retriever.retrieve(question, access)
-        selected = self._within_context_budget(retrieved)
-        trace = AnswerTrace(
-            config_version=self.config.version,
-            index_version=selected[0].chunk.index_version if selected else None,
-            retrieval_strategy="hybrid_rrf",
-            retrieved_chunk_ids=[item.chunk.chunk_id for item in selected],
-            policy="tenant_and_access_labels_required_before_scoring",
-        )
-        if not selected:
+        bundle = self._context.build(retrieved.scored(), access)
+        trace = self._trace(retrieved, bundle)
+        if not bundle:
             return QueryResponse(
                 status="insufficient_evidence",
                 answer="I could not find authorized evidence for that question.",
@@ -31,29 +32,31 @@ class QueryService:
                 trace=trace,
             )
 
-        best = selected[0].chunk
+        best = bundle.items[0]
         return QueryResponse(
             status="answered",
-            answer=best.text,
+            answer=best.chunk.text,
             citations=[
                 Citation(
-                    citation_id="C1",
-                    source_title=best.source_title,
-                    source_uri=best.source_uri,
-                    chunk_id=best.chunk_id,
+                    citation_id=best.citation_id,
+                    source_title=best.chunk.source_title,
+                    source_uri=best.chunk.source_uri,
+                    chunk_id=best.chunk.chunk_id,
                 )
             ],
             trace=trace,
         )
 
-    def _within_context_budget(self, retrieved: list[RetrievedChunk]) -> list[RetrievedChunk]:
-        selected: list[RetrievedChunk] = []
-        used = 0
-        for item in retrieved:
-            size = len(item.chunk.text)
-            if used + size > self.config.context_character_budget:
-                continue
-            selected.append(item)
-            used += size
-        return selected
-
+    def _trace(self, retrieved: RetrievalResult, bundle: ContextBundle) -> AnswerTrace:
+        return AnswerTrace(
+            config_version=self.config.version,
+            index_version=bundle.items[0].chunk.index_version if bundle else None,
+            retrieval_strategy=retrieved.strategy,
+            retrieved_chunk_ids=[item.chunk.chunk_id for item in retrieved.chunks],
+            policy="tenant_and_access_labels_required_before_scoring_and_before_context",
+            context_chunk_ids=[item.chunk.chunk_id for item in bundle.items],
+            graph_expanded_chunk_ids=list(retrieved.graph_expanded_chunk_ids),
+            dropped_chunk_ids=list(bundle.dropped_chunk_ids),
+            context_characters=bundle.used_characters,
+            policy_notes=list(bundle.policy_notes),
+        )
