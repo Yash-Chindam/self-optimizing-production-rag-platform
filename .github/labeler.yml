@@ -1,0 +1,38 @@
+"area: api":
+  - changed-files:
+      - any-glob-to-any-file: "src/rag_platform/**"
+
+"area: ui":
+  - changed-files:
+      - any-glob-to-any-file: "src/rag_platform/static/**"
+
+"tests: unit":
+  - changed-files:
+      - any-glob-to-any-file: "tests/unit/**"
+
+"tests: integration":
+  - changed-files:
+      - any-glob-to-any-file: "tests/integration/**"
+
+"tests: e2e":
+  - changed-files:
+      - any-glob-to-any-file:
+          - "tests/e2e/**"
+          - "playwright.config.ts"
+
+"area: ci-cd":
+  - changed-files:
+      - any-glob-to-any-file:
+          - ".github/**"
+          - "Dockerfile"
+
+documentation:
+  - changed-files:
+      - any-glob-to-any-file: "**/*.md"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "pyproject.toml"
+          - "package.json"
+          - "package-lock.json"
