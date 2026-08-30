@@ -6,11 +6,22 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from rag_platform.bootstrap import build_query_service
-from rag_platform.models import AccessContext, HealthResponse, QueryRequest, QueryResponse
-from rag_platform.service import QueryService
+from rag_platform.bootstrap import Platform, build_platform
+from rag_platform.catalog import IndexActivationError
+from rag_platform.ingestion import IngestionValidationError
+from rag_platform.models import (
+    AccessContext,
+    HealthResponse,
+    IndexVersion,
+    IngestRequest,
+    IngestResponse,
+    QueryRequest,
+    QueryResponse,
+    SourceRegistration,
+)
 
 STATIC_ROOT = Path(__file__).parent / "static"
+STEWARD_LABEL = "data-steward"
 
 
 def access_context(
@@ -26,15 +37,25 @@ def access_context(
     return AccessContext(tenant_id=tenant_id, labels=labels | {"public"})
 
 
-def create_app(query_service: QueryService | None = None) -> FastAPI:
+def require_steward(access: Annotated[AccessContext, Depends(access_context)]) -> AccessContext:
+    if STEWARD_LABEL not in access.labels:
+        raise HTTPException(
+            status_code=403, detail=f"source administration requires the {STEWARD_LABEL} label"
+        )
+    return access
+
+
+def create_app(platform: Platform | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        app.state.query_service = query_service or build_query_service()
+        resolved = platform or build_platform()
+        app.state.platform = resolved
+        app.state.query_service = resolved.query_service
         yield
 
     application = FastAPI(
         title="Self-Optimizing RAG Platform",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
     )
 
@@ -44,8 +65,7 @@ def create_app(query_service: QueryService | None = None) -> FastAPI:
 
     @application.get("/healthz", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
-        service: QueryService = request.app.state.query_service
-        return HealthResponse(config_version=service.config.version)
+        return HealthResponse(config_version=_platform(request).config.version)
 
     @application.post("/v1/query", response_model=QueryResponse)
     def query(
@@ -53,10 +73,48 @@ def create_app(query_service: QueryService | None = None) -> FastAPI:
         request: Request,
         access: Annotated[AccessContext, Depends(access_context)],
     ) -> QueryResponse:
-        service: QueryService = request.app.state.query_service
-        return service.answer(payload.question, access)
+        return _platform(request).query_service.answer(payload.question, access)
+
+    @application.post("/v1/sources", response_model=IngestResponse, status_code=201)
+    def ingest_source(
+        payload: IngestRequest,
+        request: Request,
+        access: Annotated[AccessContext, Depends(require_steward)],
+    ) -> IngestResponse:
+        platform_instance = _platform(request)
+        registration = SourceRegistration(
+            tenant_id=access.tenant_id, **payload.model_dump(exclude={"content"})
+        )
+        try:
+            result = platform_instance.ingestion.ingest(registration, payload.content)
+        except IngestionValidationError as error:
+            raise HTTPException(status_code=422, detail=str(error)) from error
+        return IngestResponse(report=result.report, index_version=result.index_version)
+
+    @application.get("/v1/index-versions/active", response_model=IndexVersion)
+    def active_index_version(
+        request: Request, access: Annotated[AccessContext, Depends(access_context)]
+    ) -> IndexVersion:
+        active = _platform(request).catalog.active_index_version(access.tenant_id)
+        if active is None:
+            raise HTTPException(status_code=404, detail="no active index version")
+        return active
+
+    @application.post("/v1/index-versions/rollback", response_model=IndexVersion)
+    def rollback_index_version(
+        request: Request, access: Annotated[AccessContext, Depends(require_steward)]
+    ) -> IndexVersion:
+        try:
+            return _platform(request).catalog.rollback(access.tenant_id)
+        except IndexActivationError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
 
     return application
+
+
+def _platform(request: Request) -> Platform:
+    platform_instance: Platform = request.app.state.platform
+    return platform_instance
 
 
 app = create_app()
