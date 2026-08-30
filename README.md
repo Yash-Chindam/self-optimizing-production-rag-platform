@@ -46,6 +46,20 @@ parent context, stage a new index version, validate it, and only then activate i
 rejects cross-tenant chunks, unlabelled chunks and indexes that fail a retrieval smoke check;
 a rejected index version is retired rather than activated.
 
+## Retrieval
+
+A query runs dense and lexical search under mandatory tenant and access filters, fuses the two
+rankings with a versioned method (reciprocal-rank or normalized weighted fusion), expands the
+candidate set along entity relationships in the knowledge graph, reranks a bounded candidate
+set, and then constructs the context: authorization is rechecked, near-duplicates are dropped,
+evidence is kept diverse across sources, parent sections replace fragments only when they fit,
+and the character budget is enforced before citation identifiers are attached.
+
+Fusion weights, graph depth, reranker revision, diversity and budget are all `PipelineConfig`
+fields rather than code, so each is a candidate configuration that evaluation can accept or
+reject. Every answer carries the retrieval strategy, the retrieved and context chunk
+identifiers, the graph-expanded identifiers and the policy decisions that dropped evidence.
+
 ## Test
 
 ```bash
