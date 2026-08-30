@@ -1,10 +1,15 @@
 # Self-Optimizing Production RAG Platform
 
-This repository is the executable foundation for the architecture in
+This repository is the executable implementation of the architecture in
 [`03-self-optimizing-production-rag-platform.md`](03-self-optimizing-production-rag-platform.md).
-The first vertical slice provides a tenant-aware query API, deterministic hybrid retrieval,
-citation-or-abstention behavior, and a small browser client. Production storage, model, and
-optimization adapters will be added behind the same service boundaries.
+It provides versioned ingestion, tenant-aware hybrid retrieval, citation-or-abstention
+behavior, and a small browser client.
+
+The stores and models are deterministic in-process implementations that sit behind the same
+boundaries the production adapters use: `IndexCatalog` stands in for PostgreSQL plus the
+Qdrant, OpenSearch and Neo4j indexes, and `PiiProcessor` stands in for a Presidio analyzer.
+Swapping an adapter does not change the ingestion contract, the authorization filters or the
+index-version lifecycle.
 
 ## Run locally
 
@@ -18,6 +23,28 @@ Open <http://127.0.0.1:8000>. The demo UI sends the `tenant-acme` tenant and `em
 access label. API callers must send `X-Tenant-ID`; `X-Access-Labels` is an optional
 comma-separated list that defaults to `public`. In production, a trusted identity gateway must
 derive and overwrite these headers.
+
+The demo corpus is ingested through the real pipeline on start-up, so every run exercises
+source versioning, chunking, sensitive-data processing and staged index activation.
+
+## API
+
+| Endpoint | Purpose |
+|---|---|
+| `POST /v1/query` | Answer a question from authorized evidence, or abstain. |
+| `POST /v1/sources` | Register and ingest a source. Requires the `data-steward` label. |
+| `GET /v1/index-versions/active` | Report the tenant's active index version. |
+| `POST /v1/index-versions/rollback` | Restore the previous index version without reingestion. |
+| `GET /healthz` | Report the active pipeline configuration version. |
+
+## Ingestion
+
+`IngestionPipeline.ingest` follows specification section 7: hash the content, reuse the
+existing source version when the hash is unchanged, detect document type and language,
+pseudonymize sensitive values into a vault held apart from the indexes, chunk structurally with
+parent context, stage a new index version, validate it, and only then activate it. Validation
+rejects cross-tenant chunks, unlabelled chunks and indexes that fail a retrieval smoke check;
+a rejected index version is retired rather than activated.
 
 ## Test
 

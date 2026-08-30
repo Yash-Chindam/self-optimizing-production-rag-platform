@@ -26,6 +26,12 @@ class DocumentChunk(BaseModel):
     source_uri: str
     source_title: str
     index_version: str
+    source_version_id: str = "unversioned"
+    parent_chunk_id: str | None = None
+    section_path: tuple[str, ...] = ()
+    ordinal: int = 0
+    retrievable: bool = True
+    """Parent chunks are stored for context expansion but never scored directly."""
 
 
 class QueryRequest(BaseModel):
@@ -69,3 +75,122 @@ class PipelineConfig(BaseModel):
     reciprocal_rank_constant: int = Field(default=60, gt=0)
     context_character_budget: int = Field(default=4_000, ge=200)
 
+
+class RetentionPolicy(BaseModel):
+    """Retention rule recorded with every source version (specification section 7)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    max_age_days: int | None = Field(default=None, gt=0)
+    delete_original_after_indexing: bool = False
+
+
+class PiiPolicy(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    mode: Literal["off", "detect", "pseudonymize"] = "pseudonymize"
+    recognizers: tuple[str, ...] = ("email", "phone", "national_id")
+
+
+class ChunkingConfig(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    strategy: Literal["structural", "token"] = "structural"
+    max_characters: int = Field(default=600, ge=80, le=8_000)
+    overlap_characters: int = Field(default=80, ge=0, le=2_000)
+    parent_child: bool = True
+
+    def model_post_init(self, _context: object) -> None:
+        if self.overlap_characters >= self.max_characters:
+            raise ValueError("overlap_characters must be smaller than max_characters")
+
+
+class SourceRegistration(BaseModel):
+    """Approved source declaration. Registration precedes any acquisition."""
+
+    model_config = ConfigDict(frozen=True)
+
+    source_id: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    owner: str = Field(min_length=1)
+    access_labels: frozenset[str] = Field(default_factory=lambda: frozenset({"public"}))
+    source_type: Literal["markdown", "text"] = "markdown"
+    source_uri: str = Field(min_length=1)
+    source_title: str = Field(min_length=1)
+    parser_revision: str = "parser-v1"
+    retention: RetentionPolicy = RetentionPolicy()
+    refresh: Literal["manual", "scheduled", "event"] = "manual"
+    pii_policy: PiiPolicy = PiiPolicy()
+
+
+class SourceVersion(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_version_id: str
+    source_id: str
+    tenant_id: str
+    owner: str
+    access_labels: frozenset[str]
+    source_uri: str
+    source_title: str
+    content_hash: str
+    parser_revision: str
+    transformation_revision: str
+    retention: RetentionPolicy
+    document_type: Literal["markdown", "text"]
+    language: str
+
+
+class IndexVersion(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    index_version_id: str
+    tenant_id: str
+    source_version_ids: tuple[str, ...]
+    chunking: ChunkingConfig
+    embedding_revision: str
+    analyzer_revision: str
+    graph_extractor_revision: str
+    physical_dense_index: str
+    physical_sparse_index: str
+    physical_graph_index: str
+    chunk_count: int = Field(ge=0)
+    status: Literal["building", "validated", "active", "retired"] = "building"
+
+    def with_status(
+        self, status: Literal["building", "validated", "active", "retired"]
+    ) -> "IndexVersion":
+        return self.model_copy(update={"status": status})
+
+
+class IngestRequest(BaseModel):
+    """Source registration submitted by a data steward. The tenant comes from the gateway."""
+
+    source_id: str = Field(min_length=1)
+    owner: str = Field(min_length=1)
+    source_uri: str = Field(min_length=1)
+    source_title: str = Field(min_length=1)
+    content: str = Field(min_length=1)
+    access_labels: frozenset[str] = Field(default_factory=lambda: frozenset({"public"}))
+    source_type: Literal["markdown", "text"] = "markdown"
+    parser_revision: str = "parser-v1"
+    retention: RetentionPolicy = RetentionPolicy()
+    refresh: Literal["manual", "scheduled", "event"] = "manual"
+    pii_policy: PiiPolicy = PiiPolicy()
+
+
+class IngestionReport(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    source_version_id: str
+    index_version_id: str
+    chunk_count: int
+    duplicate_chunks_removed: int
+    pii_entities_processed: int
+    reused_existing_source_version: bool
+    validation_checks: tuple[str, ...]
+
+
+class IngestResponse(BaseModel):
+    report: IngestionReport
+    index_version: IndexVersion

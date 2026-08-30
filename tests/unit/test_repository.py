@@ -1,5 +1,12 @@
+import pytest
+
 from rag_platform.models import AccessContext, DocumentChunk
-from rag_platform.repository import InMemoryChunkRepository, is_authorized, tokenize
+from rag_platform.repository import (
+    InMemoryChunkRepository,
+    ScoringChunkRepository,
+    is_authorized,
+    tokenize,
+)
 
 
 def test_tokenize_normalizes_semantic_aliases() -> None:
@@ -42,3 +49,10 @@ def test_search_with_no_tokens_or_matches_returns_empty(
     assert repository.semantic_search("!!!", employee_access, limit=5) == []
     assert repository.lexical_search("astronomy", employee_access, limit=5) == []
 
+
+
+def test_scoring_repositories_must_supply_their_own_candidates() -> None:
+    with pytest.raises(NotImplementedError):
+        ScoringChunkRepository().lexical_search(
+            "leave", AccessContext(tenant_id="tenant-a"), limit=1
+        )

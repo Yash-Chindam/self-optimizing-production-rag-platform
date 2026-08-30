@@ -1,6 +1,12 @@
 import pytest
 
-from rag_platform.models import AccessContext, DocumentChunk, PipelineConfig
+from rag_platform.models import (
+    AccessContext,
+    DocumentChunk,
+    PipelineConfig,
+    RetentionPolicy,
+    SourceVersion,
+)
 from rag_platform.repository import InMemoryChunkRepository
 
 
@@ -51,3 +57,22 @@ def employee_access() -> AccessContext:
 def config() -> PipelineConfig:
     return PipelineConfig(dense_top_k=5, sparse_top_k=5, final_top_k=5)
 
+
+
+@pytest.fixture
+def source_version() -> SourceVersion:
+    return SourceVersion(
+        source_version_id="sv-acme-handbook-0001",
+        source_id="acme-handbook",
+        tenant_id="tenant-a",
+        owner="people-operations",
+        access_labels=frozenset({"public"}),
+        source_uri="https://example.test/handbook",
+        source_title="Handbook",
+        content_hash="0001",
+        parser_revision="parser-v1",
+        transformation_revision="transform-v1",
+        retention=RetentionPolicy(),
+        document_type="markdown",
+        language="en",
+    )
