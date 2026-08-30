@@ -25,14 +25,18 @@ derive and overwrite these headers.
 ruff check .
 mypy src
 pytest --cov --cov-report=term-missing
+npm ci
+npx playwright install chromium
+npm run test:e2e
 ```
 
-Unit tests cover policy and retrieval behavior, while integration tests exercise the HTTP
-boundary. GitHub Actions runs both layers and verifies the production container build.
+Unit tests cover policy and retrieval behavior, integration tests exercise the HTTP boundary,
+and Playwright tests verify the user journey in a real browser. GitHub Actions runs all three
+layers and verifies the production container build.
 
 ## Delivery policy
 
 All changes are made on a branch and delivered by pull request. The CI workflow is the required
 quality gate. Repository branch protection should require the `CI / Python quality and tests`
-and `CI / Container build` checks.
+`CI / Playwright end-to-end`, and `CI / Container build` checks.
 
