@@ -51,6 +51,11 @@ class AnswerTrace(BaseModel):
     retrieval_strategy: str
     retrieved_chunk_ids: list[str]
     policy: str
+    context_chunk_ids: list[str] = []
+    graph_expanded_chunk_ids: list[str] = []
+    dropped_chunk_ids: list[str] = []
+    context_characters: int = 0
+    policy_notes: list[str] = []
 
 
 class QueryResponse(BaseModel):
@@ -74,6 +79,17 @@ class PipelineConfig(BaseModel):
     final_top_k: int = Field(default=4, gt=0, le=20)
     reciprocal_rank_constant: int = Field(default=60, gt=0)
     context_character_budget: int = Field(default=4_000, ge=200)
+    fusion_method: Literal["reciprocal_rank", "weighted"] = "reciprocal_rank"
+    dense_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    sparse_weight: float = Field(default=0.5, ge=0.0, le=1.0)
+    graph_expansion_depth: int = Field(default=1, ge=0, le=4)
+    graph_candidate_limit: int = Field(default=4, ge=0, le=50)
+    graph_extractor_revision: str = "graph-extractor-v1"
+    rerank_candidate_count: int = Field(default=12, ge=0, le=100)
+    reranker_revision: str = "reranker-lexical-v1"
+    max_chunks_per_source: int = Field(default=2, gt=0, le=20)
+    near_duplicate_threshold: float = Field(default=0.85, gt=0.0, le=1.0)
+    expand_parent_context: bool = True
 
 
 class RetentionPolicy(BaseModel):
