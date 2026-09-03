@@ -56,10 +56,16 @@ class AnswerTrace(BaseModel):
     dropped_chunk_ids: list[str] = []
     context_characters: int = 0
     policy_notes: list[str] = []
+    intent: str | None = None
+    query_transformations: list[str] = []
+    workflow_path: list[str] = []
+    program_revisions: list[str] = []
+    repair_attempts: int = 0
+    unsupported_claims: list[str] = []
 
 
 class QueryResponse(BaseModel):
-    status: Literal["answered", "insufficient_evidence"]
+    status: Literal["answered", "insufficient_evidence", "clarification_needed"]
     answer: str
     citations: list[Citation]
     trace: AnswerTrace
@@ -90,6 +96,11 @@ class PipelineConfig(BaseModel):
     max_chunks_per_source: int = Field(default=2, gt=0, le=20)
     near_duplicate_threshold: float = Field(default=0.85, gt=0.0, le=1.0)
     expand_parent_context: bool = True
+    answer_sentence_limit: int = Field(default=2, gt=0, le=10)
+    max_subqueries: int = Field(default=3, gt=0, le=10)
+    max_repair_attempts: int = Field(default=1, ge=0, le=3)
+    clarify_ambiguous_queries: bool = True
+    program_suite_revision: str = "programs-v1"
 
 
 class RetentionPolicy(BaseModel):

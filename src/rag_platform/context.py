@@ -30,9 +30,6 @@ class ContextBundle:
     dropped_chunk_ids: tuple[str, ...]
     policy_notes: tuple[str, ...]
 
-    def __bool__(self) -> bool:
-        return bool(self.items)
-
 
 class ContextBuilder:
     def __init__(
