@@ -146,3 +146,28 @@ def test_invalid_source_content_is_rejected(client: TestClient) -> None:
         "/v1/sources", headers=STEWARD, json={**NEW_SOURCE, "content": "   \n\n   "}
     )
     assert response.status_code == 422
+
+
+@pytest.mark.integration
+def test_answer_cites_only_the_evidence_it_quoted(client: TestClient) -> None:
+    payload = client.post(
+        "/v1/query", headers=EMPLOYEE, json={"question": "How do I request annual leave?"}
+    ).json()
+
+    assert payload["status"] == "answered"
+    assert payload["citations"]
+    cited_chunks = {citation["chunk_id"] for citation in payload["citations"]}
+    assert cited_chunks.issubset(set(payload["trace"]["context_chunk_ids"]))
+    assert payload["trace"]["intent"] == "procedural"
+    assert payload["trace"]["workflow_path"][0] == "classify"
+    assert payload["trace"]["repair_attempts"] == 0
+    assert payload["trace"]["unsupported_claims"] == []
+
+
+@pytest.mark.integration
+def test_an_ambiguous_question_returns_a_clarification(client: TestClient) -> None:
+    payload = client.post("/v1/query", headers=EMPLOYEE, json={"question": "leave"}).json()
+
+    assert payload["status"] == "clarification_needed"
+    assert payload["citations"] == []
+    assert payload["trace"]["workflow_path"] == ["classify", "clarify"]
