@@ -77,6 +77,32 @@ every claim it produces is a sentence copied from a chunk it cites — and a DSP
 can replace an implementation without changing the signature the workflow depends on or the
 `program_revisions` an evaluation run records.
 
+## Evaluation and optimization
+
+`Evaluator` (specification section 16) runs a versioned `EvaluationCase` set against a query
+service and checks each answer deterministically rather than by LLM judgment: retrieval recall
+and reciprocal rank against the required evidence, grounding and forbidden claims against the
+answer text, and the expected outcome against the actual status. A failed case is tagged with
+the taxonomy a reviewer would assign by hand (section 13) — an unauthorized chunk in context is
+always `authorization`; a wrong outcome or missing evidence is `retrieval`; an ungrounded or
+forbidden claim is `citation`; a correct, grounded answer missing an expected term is
+`generation`.
+
+`OptimizationRun` runs the control loop in section 12 over the bounded candidate space in
+section 11: `CandidateSpace` perturbs one `PipelineConfig` field at a time within
+reviewer-approved bounds, `Constraints` rejects any candidate that lets an unauthorized chunk
+into context or regresses latency or quality against the frozen baseline, and the
+non-dominated survivors among what remains are marked Pareto-optimal. `canary` performs the
+loop's last two steps: one approved candidate is evaluated again and promoted only if it still
+clears every constraint, otherwise it is rolled back. `PipelineConfigRegistry` mirrors
+`IndexCatalog`'s staged-activation pattern for `PipelineConfig`, so promotion and one-action
+rollback apply to the production configuration the same way they apply to an index version
+(section 17).
+
+Optimization runs outside production (section 3, "Optimization service"): nothing in this
+module changes which configuration answers a live query, so it is exercised as a library
+against its own test corpus rather than through the HTTP API.
+
 ## Test
 
 ```bash
