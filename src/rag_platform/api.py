@@ -55,7 +55,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
 
     application = FastAPI(
         title="Self-Optimizing RAG Platform",
-        version="0.4.0",
+        version="0.5.0",
         lifespan=lifespan,
     )
 
