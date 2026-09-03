@@ -60,6 +60,23 @@ fields rather than code, so each is a candidate configuration that evaluation ca
 reject. Every answer carries the retrieval strategy, the retrieved and context chunk
 identifiers, the graph-expanded identifiers and the policy decisions that dropped evidence.
 
+## Query workflow
+
+`QueryWorkflow` follows specification section 9 as an explicit state machine rather than a
+linear chain: classify, clarify, rewrite, decompose, retrieve, build context, generate, verify,
+repair and fallback are separate states, each recorded on the answer's `workflow_path`. An
+ambiguous question is clarified instead of answered; a grounded-but-unverified answer is
+repaired by narrowing to its single best-supported sentence before it is re-verified, and only
+falls back after the configured repair budget is spent. This is the structure LangGraph owns in
+the deployed topology — the executor can be swapped without changing the states or their tests.
+
+The states call a `ProgramSuite` (specification section 10): typed classifier, rewriter,
+decomposer, synthesizer, verifier and clarification programs, each with an independent
+revision. The default implementations are deterministic — the synthesizer is extractive, so
+every claim it produces is a sentence copied from a chunk it cites — and a DSPy-compiled module
+can replace an implementation without changing the signature the workflow depends on or the
+`program_revisions` an evaluation run records.
+
 ## Test
 
 ```bash
