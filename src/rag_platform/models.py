@@ -62,6 +62,7 @@ class AnswerTrace(BaseModel):
     program_revisions: list[str] = []
     repair_attempts: int = 0
     unsupported_claims: list[str] = []
+    degraded_dependencies: list[str] = []
 
 
 class QueryResponse(BaseModel):

@@ -23,6 +23,7 @@ from rag_platform.programs import (
     SynthesizedAnswer,
     VerificationResult,
 )
+from rag_platform.reliability import CircuitBreaker
 from rag_platform.retrieval import HybridRetriever, RetrievalResult, RetrievedChunk
 
 INSUFFICIENT_EVIDENCE = "I could not find authorized evidence for that question."
@@ -45,6 +46,7 @@ class WorkflowState:
     clarification: str = ""
     path: list[str] = field(default_factory=list)
     transformations: list[str] = field(default_factory=list)
+    degraded_dependencies: list[str] = field(default_factory=list)
 
 
 class QueryWorkflow:
@@ -54,11 +56,15 @@ class QueryWorkflow:
         config: PipelineConfig,
         context_builder: ContextBuilder,
         programs: ProgramSuite | None = None,
+        generator_breaker: CircuitBreaker | None = None,
+        verifier_breaker: CircuitBreaker | None = None,
     ) -> None:
         self._retriever = retriever
         self._config = config
         self._context = context_builder
         self._programs = programs or ProgramSuite()
+        self._generator_breaker = generator_breaker or CircuitBreaker(name="generator")
+        self._verifier_breaker = verifier_breaker or CircuitBreaker(name="verifier")
 
     def run(self, question: str, access: AccessContext) -> QueryResponse:
         state = WorkflowState(
@@ -127,6 +133,7 @@ class QueryWorkflow:
             self._retriever.retrieve(subquery, state.access) for subquery in state.subqueries
         ]
         state.retrieval = _merge(results, limit=self._config.final_top_k)
+        state.degraded_dependencies.extend(state.retrieval.degraded_dependencies)
         return "build_context"
 
     def _build_context(self, state: WorkflowState) -> str:
@@ -136,14 +143,31 @@ class QueryWorkflow:
 
     def _generate(self, state: WorkflowState) -> str:
         assert state.bundle is not None
-        state.answer = self._programs.synthesizer.synthesize(
-            state.question, state.bundle.items, sentence_limit=state.sentence_limit
+        bundle = state.bundle
+        no_answer = SynthesizedAnswer(text="", citation_ids=())
+        answer, note = self._generator_breaker.call(
+            lambda: self._programs.synthesizer.synthesize(
+                state.question, bundle.items, sentence_limit=state.sentence_limit
+            ),
+            fallback=no_answer,
         )
+        state.answer = answer
+        if not note.ok:
+            state.degraded_dependencies.append(note.detail)
         return "verify"
 
     def _verify(self, state: WorkflowState) -> str:
         assert state.answer is not None and state.bundle is not None
-        state.verification = self._programs.verifier.verify(state.answer, state.bundle.items)
+        answer, bundle = state.answer, state.bundle
+        # A verifier that cannot run must never be treated as having confirmed grounding.
+        claims = (answer.text,) if answer.text.strip() else ()
+        unverifiable = VerificationResult(grounded=False, unsupported_claims=claims)
+        verification, note = self._verifier_breaker.call(
+            lambda: self._programs.verifier.verify(answer, bundle.items), fallback=unverifiable
+        )
+        state.verification = verification
+        if not note.ok:
+            state.degraded_dependencies.append(note.detail)
         if state.verification.grounded:
             return "answer"
         if state.repairs < self._config.max_repair_attempts:
@@ -224,6 +248,7 @@ class QueryWorkflow:
             unsupported_claims=(
                 list(verification.unsupported_claims) if verification is not None else []
             ),
+            degraded_dependencies=list(state.degraded_dependencies),
         )
 
 
@@ -243,8 +268,14 @@ def _merge(results: list[RetrievalResult], *, limit: int) -> RetrievalResult:
             chunk_id for result in results for chunk_id in result.graph_expanded_chunk_ids
         )
     )
+    degraded = tuple(
+        dict.fromkeys(
+            detail for result in results for detail in result.degraded_dependencies
+        )
+    )
     return RetrievalResult(
         chunks=tuple(ranked[:limit]),
         strategy=results[0].strategy,
         graph_expanded_chunk_ids=expanded,
+        degraded_dependencies=degraded,
     )
