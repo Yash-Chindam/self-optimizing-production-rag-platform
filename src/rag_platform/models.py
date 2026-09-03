@@ -103,6 +103,92 @@ class PipelineConfig(BaseModel):
     program_suite_revision: str = "programs-v1"
 
 
+FailureCategory = Literal[
+    "ingestion",
+    "chunking",
+    "retrieval",
+    "reranking",
+    "generation",
+    "citation",
+    "authorization",
+    "operational",
+]
+"""Specification section 13. Assigned to a case by a reviewer, or to a result by the evaluator."""
+
+
+class EvaluationCase(BaseModel):
+    """A reviewed evaluation example (specification section 14)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    case_id: str = Field(min_length=1)
+    question: str = Field(min_length=1)
+    tenant_id: str = Field(min_length=1)
+    access_labels: frozenset[str] = Field(default_factory=lambda: frozenset({"public"}))
+    required_evidence_chunk_ids: frozenset[str] = frozenset()
+    forbidden_chunk_ids: frozenset[str] = frozenset()
+    acceptable_answer_terms: frozenset[str] = frozenset()
+    forbidden_claims: tuple[str, ...] = ()
+    expected_status: Literal["answered", "insufficient_evidence", "clarification_needed"] = (
+        "answered"
+    )
+    reviewer: str = Field(min_length=1)
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+    failure_tags: tuple[FailureCategory, ...] = ()
+
+
+class EvaluationSummary(BaseModel):
+    """Aggregate metrics for one evaluation run (specification section 16)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    case_count: int = Field(ge=0)
+    passed_count: int = Field(ge=0)
+    mean_recall_at_k: float = Field(ge=0.0, le=1.0)
+    mean_reciprocal_rank: float = Field(ge=0.0, le=1.0)
+    grounded_rate: float = Field(ge=0.0, le=1.0)
+    authorization_violations: int = Field(ge=0)
+    p50_latency_ms: float = Field(ge=0.0)
+    p95_latency_ms: float = Field(ge=0.0)
+
+    @property
+    def pass_rate(self) -> float:
+        return self.passed_count / self.case_count if self.case_count else 0.0
+
+
+class ConstraintViolation(BaseModel):
+    """A promotion-blocking check the candidate failed (specification sections 12 and 17)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    constraint: Literal["latency", "authorization", "quality_regression"]
+    detail: str
+
+
+CandidatePromotion = Literal[
+    "rejected", "approved", "pareto_optimal", "canary", "promoted", "rolled_back"
+]
+
+
+class CandidateRun(BaseModel):
+    """One evaluated pipeline configuration in the optimization control loop (section 14)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    run_id: str = Field(min_length=1)
+    baseline_config_version: str
+    config: PipelineConfig
+    config_diff: tuple[str, ...]
+    dataset_revision: str
+    program_revisions: tuple[str, ...]
+    summary: EvaluationSummary
+    constraint_violations: tuple[ConstraintViolation, ...] = ()
+    promotion: CandidatePromotion = "approved"
+
+    def with_promotion(self, promotion: CandidatePromotion) -> "CandidateRun":
+        return self.model_copy(update={"promotion": promotion})
+
+
 class RetentionPolicy(BaseModel):
     """Retention rule recorded with every source version (specification section 7)."""
 
