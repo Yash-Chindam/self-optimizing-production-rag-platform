@@ -3,7 +3,8 @@ from dataclasses import dataclass
 
 from rag_platform.context import ContextBuilder, EvidenceItem
 from rag_platform.models import AccessContext, DocumentChunk, PipelineConfig
-from rag_platform.programs import ProgramSuite, SynthesizedAnswer
+from rag_platform.programs import ProgramSuite, SynthesizedAnswer, VerificationResult
+from rag_platform.reliability import CircuitBreaker
 from rag_platform.repository import InMemoryChunkRepository
 from rag_platform.retrieval import HybridRetriever
 from rag_platform.workflow import QueryWorkflow
@@ -59,6 +60,8 @@ def build_workflow(
     config: PipelineConfig | None = None,
     programs: ProgramSuite | None = None,
     corpus: list[DocumentChunk] | None = None,
+    generator_breaker: CircuitBreaker | None = None,
+    verifier_breaker: CircuitBreaker | None = None,
 ) -> QueryWorkflow:
     resolved = config or PipelineConfig()
     repository = InMemoryChunkRepository(corpus if corpus is not None else CORPUS)
@@ -67,6 +70,8 @@ def build_workflow(
         resolved,
         ContextBuilder(resolved),
         programs,
+        generator_breaker,
+        verifier_breaker,
     )
 
 
@@ -174,6 +179,57 @@ def test_a_question_without_authorized_evidence_falls_back() -> None:
     assert response.status == "insufficient_evidence"
     assert response.trace.workflow_path[-1] == "build_context"
     assert response.trace.context_chunk_ids == []
+
+
+@dataclass(slots=True)
+class FailingSynthesizer:
+    revision: str = "synthesizer-broken"
+
+    def synthesize(
+        self, question: str, evidence: Sequence[EvidenceItem], *, sentence_limit: int
+    ) -> SynthesizedAnswer:
+        raise RuntimeError("synthesizer unavailable")
+
+
+@dataclass(slots=True)
+class FailingVerifier:
+    revision: str = "verifier-broken"
+
+    def verify(
+        self, answer: SynthesizedAnswer, evidence: Sequence[EvidenceItem]
+    ) -> VerificationResult:
+        raise RuntimeError("verifier unavailable")
+
+
+def test_a_failing_synthesizer_degrades_to_abstention_instead_of_crashing() -> None:
+    programs = ProgramSuite(synthesizer=FailingSynthesizer())
+    breaker = CircuitBreaker(name="generator", failure_threshold=5)
+    response = build_workflow(programs=programs, generator_breaker=breaker).run(
+        "annual leave", ACCESS
+    )
+
+    assert response.status == "insufficient_evidence"
+    assert any(
+        note.startswith("generator_failed") for note in response.trace.degraded_dependencies
+    )
+
+
+def test_a_failing_verifier_never_lets_an_unverified_answer_through() -> None:
+    programs = ProgramSuite(verifier=FailingVerifier())
+    breaker = CircuitBreaker(name="verifier", failure_threshold=5)
+    response = build_workflow(programs=programs, verifier_breaker=breaker).run(
+        "annual leave", ACCESS
+    )
+
+    assert response.status == "insufficient_evidence"
+    assert any(
+        note.startswith("verifier_failed") for note in response.trace.degraded_dependencies
+    )
+
+
+def test_a_healthy_run_reports_no_degraded_dependencies() -> None:
+    response = build_workflow().run("How do I request annual leave?", ACCESS)
+    assert response.trace.degraded_dependencies == []
 
 
 def test_an_empty_synthesis_never_becomes_an_uncited_answer() -> None:
