@@ -103,6 +103,19 @@ Optimization runs outside production (section 3, "Optimization service"): nothin
 module changes which configuration answers a live query, so it is exercised as a library
 against its own test corpus rather than through the HTTP API.
 
+## Reliability
+
+Graph expansion, reranking, answer synthesis and claim verification are all optional
+enrichments over an already-authorized candidate set, not the retrieval or authorization
+boundary itself (specification section 17). Each is called behind a `CircuitBreaker`: a failing
+or slow dependency degrades to a declared fallback — no graph expansion, the unranked
+candidates, an empty synthesis, or (for verification) "not grounded" — rather than crashing the
+query. A verifier that cannot run is never treated as having confirmed grounding, so a failure
+there still routes through the same repair-then-fallback path an ungrounded answer does. Every
+degradation is recorded on `AnswerTrace.degraded_dependencies`. After enough consecutive
+failures the breaker opens and fails fast for a cooldown period instead of retrying a dependency
+that is down on every query; one trial call after the cooldown decides whether it closes again.
+
 ## Test
 
 ```bash
