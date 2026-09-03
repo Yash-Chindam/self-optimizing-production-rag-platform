@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "self-optimizing-rag-platform"
-version = "0.1.0"
+version = "0.3.0"
 description = "Evaluation-driven, privacy-aware RAG platform starter"
 readme = "README.md"
 requires-python = ">=3.11"
