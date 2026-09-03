@@ -1,6 +1,9 @@
+from collections.abc import Iterable
+
 from rag_platform.graph import GraphRetriever, KnowledgeGraph
 from rag_platform.models import AccessContext, DocumentChunk, PipelineConfig
-from rag_platform.repository import InMemoryChunkRepository
+from rag_platform.reliability import CircuitBreaker
+from rag_platform.repository import InMemoryChunkRepository, ScoredChunk
 from rag_platform.rerank import LexicalCrossEncoder
 from rag_platform.retrieval import HybridRetriever
 
@@ -120,6 +123,76 @@ def test_reranking_reorders_a_bounded_candidate_set(
 
     assert result.strategy.endswith("reranker-lexical-v1")
     assert result.chunks[0].fused_score > 1.0
+
+
+class FailingGraphRetriever:
+    def expand(
+        self, seeds: Iterable[DocumentChunk], access: AccessContext, *, depth: int, limit: int
+    ) -> list[DocumentChunk]:
+        raise RuntimeError("graph service unavailable")
+
+
+class FailingReranker:
+    revision = "reranker-broken"
+
+    def rerank(
+        self, question: str, candidates: Iterable[DocumentChunk], *, limit: int
+    ) -> list[ScoredChunk]:
+        raise RuntimeError("reranker service unavailable")
+
+
+def test_no_configured_dependency_is_ever_reported_as_degraded(
+    repository: InMemoryChunkRepository, employee_access: AccessContext, config: PipelineConfig
+) -> None:
+    result = HybridRetriever(repository, config).retrieve("annual leave", employee_access)
+    assert result.degraded_dependencies == ()
+
+
+def test_a_failing_graph_dependency_degrades_instead_of_crashing() -> None:
+    chunks = graph_corpus()
+    config = PipelineConfig(graph_expansion_depth=1, final_top_k=5)
+    breaker = CircuitBreaker(name="graph_expansion", failure_threshold=5)
+    retriever = HybridRetriever(
+        InMemoryChunkRepository(chunks),
+        config,
+        graph_retriever=FailingGraphRetriever(),
+        graph_breaker=breaker,
+    )
+    result = retriever.retrieve("payroll service", AccessContext(tenant_id="tenant-a"))
+
+    assert result.graph_expanded_chunk_ids == ()
+    assert [item.chunk.chunk_id for item in result.chunks] == ["payroll"]
+    assert any(note.startswith("graph_expansion_failed") for note in result.degraded_dependencies)
+
+
+def test_a_failing_reranker_degrades_to_the_unranked_candidates(
+    repository: InMemoryChunkRepository, employee_access: AccessContext
+) -> None:
+    config = PipelineConfig(rerank_candidate_count=5)
+    breaker = CircuitBreaker(name="reranker", failure_threshold=5)
+    retriever = HybridRetriever(
+        repository, config, reranker=FailingReranker(), reranker_breaker=breaker
+    )
+    result = retriever.retrieve("annual leave", employee_access)
+
+    assert [item.chunk.chunk_id for item in result.chunks] == ["public-leave"]
+    assert any(note.startswith("reranker_failed") for note in result.degraded_dependencies)
+
+
+def test_repeated_graph_failures_open_the_circuit_and_fail_fast() -> None:
+    chunks = graph_corpus()
+    config = PipelineConfig(graph_expansion_depth=1, final_top_k=5)
+    breaker = CircuitBreaker(name="graph_expansion", failure_threshold=1)
+    retriever = HybridRetriever(
+        InMemoryChunkRepository(chunks),
+        config,
+        graph_retriever=FailingGraphRetriever(),
+        graph_breaker=breaker,
+    )
+    retriever.retrieve("payroll service", AccessContext(tenant_id="tenant-a"))
+    result = retriever.retrieve("payroll service", AccessContext(tenant_id="tenant-a"))
+
+    assert "graph_expansion_circuit_open" in result.degraded_dependencies
 
 
 def test_retrieval_result_exposes_scored_chunks(
