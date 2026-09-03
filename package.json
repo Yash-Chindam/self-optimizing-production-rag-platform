@@ -1,7 +1,7 @@
 {
   "name": "self-optimizing-rag-platform-e2e",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.3.0",
   "scripts": {
     "test:e2e": "playwright test"
   },

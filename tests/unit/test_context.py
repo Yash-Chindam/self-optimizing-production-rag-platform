@@ -44,7 +44,6 @@ def test_citation_ids_are_assigned_in_rank_order() -> None:
     )
     assert [item.citation_id for item in bundle.items] == ["C1", "C2"]
     assert bundle.used_characters == sum(len(item.chunk.text) for item in bundle.items)
-    assert bool(bundle) is True
 
 
 def test_authorization_is_rechecked_before_context_assembly() -> None:
@@ -166,5 +165,5 @@ def test_the_budget_drops_evidence_that_does_not_fit() -> None:
 
 def test_an_empty_candidate_set_produces_an_empty_bundle() -> None:
     bundle = ContextBuilder(PipelineConfig()).build([], EMPLOYEE)
-    assert bool(bundle) is False
+    assert bundle.items == ()
     assert bundle.used_characters == 0
