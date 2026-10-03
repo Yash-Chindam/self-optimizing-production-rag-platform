@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "self-optimizing-rag-platform"
-version = "0.5.0"
+version = "0.6.0"
 description = "Evaluation-driven, privacy-aware RAG platform starter"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -21,6 +21,16 @@ dev = [
   "pytest>=8.4,<10.0",
   "pytest-cov>=6.2,<8.0",
   "ruff>=0.12,<1.0",
+]
+# Production store adapters (specification sections 5, 6 and 18). Optional on purpose: the
+# deterministic in-process implementations remain the default, so the demo and the unit suite
+# install nothing heavy.
+stores = [
+  "qdrant-client>=1.12,<2.0",
+  "opensearch-py>=2.7,<4.0",
+]
+embeddings = [
+  "sentence-transformers>=3.0,<6.0",
 ]
 
 [project.scripts]
@@ -62,4 +72,28 @@ select = ["E", "F", "I", "N", "UP", "B", "SIM", "RUF"]
 python_version = "3.11"
 strict = true
 packages = ["rag_platform"]
+
+# Optional store clients ship no stubs, and they are absent entirely unless the matching extra
+# is installed. Type checking the adapters still covers everything on our side of the boundary.
+[[tool.mypy.overrides]]
+module = [
+  "qdrant_client.*",
+  "opensearchpy.*",
+  "sentence_transformers.*",
+]
+ignore_missing_imports = true
+
+# These arrive transitively with the store extras. Their own stubs target a newer Python than
+# the 3.11 floor this project type checks against, and checking inside them proves nothing
+# about this codebase.
+[[tool.mypy.overrides]]
+module = [
+  "numpy",
+  "numpy.*",
+  "grpc",
+  "grpc.*",
+]
+follow_imports = "skip"
+follow_imports_for_stubs = true
+ignore_missing_imports = true
 
