@@ -171,6 +171,55 @@ and queried offline. It captures lexical and co-occurrence similarity, not learn
 install the `embeddings` extra and use `SentenceTransformerEmbedder` for that, behind the same
 protocol.
 
+## Language programs and sensitive-data recognition
+
+Two more stand-ins have real implementations behind their protocols.
+
+**DSPy programs** (`rag_platform.adapters.dspy_programs`, the `llm` extra) implement the six
+candidate modules in specification section 10 — classification, rewriting, decomposition,
+synthesis, claim verification and clarification — with everything that section requires of
+each: a typed signature, curated examples, an explicit metric, a training and a held-out split,
+and a versioned compiled artifact.
+
+```python
+import dspy
+from pathlib import Path
+from rag_platform.adapters import dspy_examples
+from rag_platform.adapters.dspy_programs import (
+    ClassifyQuery, build_program_suite, compile_program, intent_metric,
+)
+
+lm = dspy.LM("<any model identifier dspy.LM accepts>")
+compiled = compile_program(
+    "classifier", ClassifyQuery, dspy_examples.classifier_examples(), intent_metric, lm
+)
+compiled.save(Path("artifacts/programs"))        # records revision and held-out score
+programs = build_program_suite(lm, artifacts=Path("artifacts/programs"))
+```
+
+A program's revision is a hash of its compiled state, so the `program_revisions` on an
+`AnswerTrace` identify exactly the prompt and demonstrations that produced an answer. The
+adapters keep the guarantees the deterministic programs gave for free: a citation the model
+invents is discarded, an answer with no surviving citation is not an answer, and the verifier
+only sees the evidence the answer cites. Classification, rewriting, decomposition and
+clarification fall back to the deterministic program if the model call fails; synthesis and
+verification raise instead, and the workflow's circuit breakers turn that into abstention.
+The suite is tested offline against DSPy's `DummyLM`, including the full query workflow.
+
+**Presidio** (`rag_platform.adapters.presidio`, the `privacy` extra) is a `PiiRecognizer`, so it
+replaces the regex recognizers inside `PiiProcessor` without touching pseudonymization, the
+vault or rehydration. It runs in-process and finds what no pattern can — a person's name:
+
+```python
+from rag_platform.adapters.presidio import PresidioRecognizerFactory, build_analyzer
+from rag_platform.pii import PiiProcessor
+
+processor = PiiProcessor(recognizer_factory=PresidioRecognizerFactory(analyzer=build_analyzer()))
+```
+
+A `PiiPolicy` opts into a kind by naming it (`recognizers=("email", "phone", "person")`); a kind
+that is not named is never analyzed.
+
 ## Reliability
 
 Graph expansion, reranking, answer synthesis and claim verification are all optional

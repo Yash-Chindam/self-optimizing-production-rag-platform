@@ -6,6 +6,7 @@ from the index stores, and rehydration requires an explicitly approved workflow.
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from hashlib import blake2s
 from typing import Literal, Protocol
@@ -90,14 +91,19 @@ class PseudonymVault:
         return len(self._mappings)
 
 
+RecognizerFactory = Callable[[tuple[str, ...]], PiiRecognizer]
+"""Builds the recognizer for the kinds a `PiiPolicy` names."""
+
+
 @dataclass(slots=True)
 class PiiProcessor:
     vault: PseudonymVault = field(default_factory=PseudonymVault)
+    recognizer_factory: RecognizerFactory = RegexRecognizer
 
     def process(self, text: str, policy: PiiPolicy, tenant_id: str) -> PiiResult:
         if policy.mode == "off":
             return PiiResult(text=text, entities=())
-        spans = RegexRecognizer(policy.recognizers).detect(text)
+        spans = self.recognizer_factory(policy.recognizers).detect(text)
         if not spans:
             return PiiResult(text=text, entities=())
 

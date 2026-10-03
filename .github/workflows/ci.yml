@@ -23,9 +23,11 @@ jobs:
           python-version: "3.13"
           cache: pip
       - name: Install Python dependencies
-        # The store extras are installed so the adapters are type checked against the real
+        # Every optional extra is installed so the adapters are type checked against the real
         # client types and their unit tests count toward coverage.
-        run: python -m pip install -e ".[dev,stores]"
+        run: |
+          python -m pip install -e ".[dev,stores,privacy,llm]"
+          python -m spacy download en_core_web_sm
       - name: Lint
         run: ruff check .
       - name: Type check

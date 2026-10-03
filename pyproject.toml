@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "self-optimizing-rag-platform"
-version = "0.7.0"
+version = "0.8.0"
 description = "Evaluation-driven, privacy-aware RAG platform starter"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -35,6 +35,14 @@ stores = [
 ]
 embeddings = [
   "sentence-transformers>=3.0,<6.0",
+]
+# Presidio runs in-process, inside the trusted boundary. It also needs a spaCy model:
+#   python -m spacy download en_core_web_sm
+privacy = [
+  "presidio-analyzer>=2.2,<3.0",
+]
+llm = [
+  "dspy>=3.0,<4.0",
 ]
 
 [project.scripts]
@@ -100,6 +108,10 @@ module = [
   "numpy.*",
   "grpc",
   "grpc.*",
+  "dspy",
+  "dspy.*",
+  "presidio_analyzer",
+  "presidio_analyzer.*",
 ]
 follow_imports = "skip"
 follow_imports_for_stubs = true
