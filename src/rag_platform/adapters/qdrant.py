@@ -93,24 +93,28 @@ class QdrantDenseIndex:
 
     def access_filter(self, access: AccessContext) -> Any:
         """Mandatory tenant match, plus the labels the caller holds. Never optional."""
-        from qdrant_client.models import FieldCondition, Filter, MatchAny, MatchValue
+        from qdrant_client.models import (
+            FieldCondition,
+            Filter,
+            IsEmptyCondition,
+            MatchAny,
+            MatchValue,
+            PayloadField,
+        )
 
         conditions: list[Any] = [
             FieldCondition(key="tenant_id", match=MatchValue(value=access.tenant_id)),
             FieldCondition(key="retrievable", match=MatchValue(value=True)),
         ]
-        held = sorted(access.labels)
         # A chunk with no required labels is public; one with required labels must have all of
         # them held by the caller. Qdrant cannot express the subset test, so this narrows to
-        # "mentions at least one held label" and `is_authorized` finishes the job.
-        return Filter(
-            must=conditions,
-            should=(
-                [FieldCondition(key="required_labels", match=MatchAny(any=held))]
-                if held
-                else None
-            ),
-        )
+        # "requires nothing, or mentions at least one held label" and `is_authorized` finishes
+        # the job. Beside `must`, at least one `should` condition has to match.
+        should: list[Any] = [IsEmptyCondition(is_empty=PayloadField(key="required_labels"))]
+        held = sorted(access.labels)
+        if held:
+            should.append(FieldCondition(key="required_labels", match=MatchAny(any=held)))
+        return Filter(must=conditions, should=should)
 
 
 def _authorized_results(

@@ -98,9 +98,22 @@ def test_the_label_subset_test_is_exact() -> None:
     index, client = build_index()
     index.lexical_search("annual leave", EMPLOYEE, limit=4)
 
-    terms_set = filter_clause(client.searches[0], "terms_set")["required_labels"]
+    should = filter_clause(client.searches[0], "bool")["should"]
+    terms_set = next(clause for clause in should if "terms_set" in clause)["terms_set"][
+        "required_labels"
+    ]
     assert sorted(terms_set["terms"]) == ["employees", "public"]
     assert terms_set["minimum_should_match_field"] == "required_label_count"
+
+
+def test_a_chunk_requiring_no_label_is_admitted_by_its_own_clause() -> None:
+    """terms_set matches nothing when the required count is zero, so public needs a clause."""
+    index, client = build_index()
+    index.lexical_search("annual leave", EMPLOYEE, limit=4)
+
+    labels = filter_clause(client.searches[0], "bool")
+    assert {"term": {"required_label_count": 0}} in labels["should"]
+    assert labels["minimum_should_match"] == 1
 
 
 def test_the_question_is_the_scored_clause() -> None:

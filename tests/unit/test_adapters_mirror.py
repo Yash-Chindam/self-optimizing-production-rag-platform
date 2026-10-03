@@ -203,6 +203,7 @@ class FakeOpenSearch:
 
 
 def test_the_qdrant_mirror_writes_into_the_collection_the_index_version_names() -> None:
+    pytest.importorskip("qdrant_client")
     client = FakeQdrant()
     mirror = QdrantMirror(client=client, embedder=HashingEmbedder(dimensions=32))  # type: ignore[arg-type]
 

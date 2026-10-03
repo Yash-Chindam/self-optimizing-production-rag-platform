@@ -100,11 +100,21 @@ class OpenSearchSparseIndex:
             {"term": {"tenant_id": access.tenant_id}},
             {"term": {"retrievable": True}},
             {
-                "terms_set": {
-                    "required_labels": {
-                        "terms": sorted(access.labels),
-                        "minimum_should_match_field": "required_label_count",
-                    }
+                "bool": {
+                    # `terms_set` never matches a document whose required count is zero, so a
+                    # chunk that requires no label is admitted by its own clause.
+                    "should": [
+                        {"term": {"required_label_count": 0}},
+                        {
+                            "terms_set": {
+                                "required_labels": {
+                                    "terms": sorted(access.labels),
+                                    "minimum_should_match_field": "required_label_count",
+                                }
+                            }
+                        },
+                    ],
+                    "minimum_should_match": 1,
                 }
             },
         ]

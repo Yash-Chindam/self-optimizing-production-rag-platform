@@ -9,10 +9,15 @@ the wire protocol against a real Qdrant.
 from dataclasses import dataclass, field
 from typing import Any
 
+import pytest
+
 from rag_platform.adapters.embeddings import HashingEmbedder
 from rag_platform.adapters.payload import to_payload
 from rag_platform.adapters.qdrant import QdrantDenseIndex
 from rag_platform.models import AccessContext, DocumentChunk
+
+# The adapter builds real Qdrant filter and point models, so it needs the `stores` extra.
+pytest.importorskip("qdrant_client")
 
 EMPLOYEE = AccessContext(tenant_id="tenant-a", labels=frozenset({"public", "employees"}))
 
@@ -134,9 +139,19 @@ def test_the_callers_labels_are_offered_to_the_store_as_a_narrowing_filter() -> 
     index.semantic_search("annual leave", EMPLOYEE, limit=4)
 
     should = client.queries[0]["query_filter"].should
-    assert should is not None
-    assert should[0].key == "required_labels"
-    assert sorted(should[0].match.any) == ["employees", "public"]
+    held = [condition for condition in should if hasattr(condition, "match")]
+    assert held[0].key == "required_labels"
+    assert sorted(held[0].match.any) == ["employees", "public"]
+
+
+def test_a_chunk_requiring_no_label_is_admitted_by_its_own_clause() -> None:
+    """Beside `must`, one `should` has to match, so public chunks need a clause of their own."""
+    index, client = build_index()
+    index.semantic_search("annual leave", EMPLOYEE, limit=4)
+
+    should = client.queries[0]["query_filter"].should
+    empties = [condition for condition in should if hasattr(condition, "is_empty")]
+    assert empties[0].is_empty.key == "required_labels"
 
 
 def test_the_query_overfetches_so_the_recheck_can_drop_hits() -> None:
