@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from hashlib import blake2s, sha256
 
 from rag_platform.adapters.mirror import IndexMirror
+from rag_platform.adapters.originals import OriginalStore
 from rag_platform.catalog import IndexCatalog
 from rag_platform.chunking import build_pieces
 from rag_platform.models import (
@@ -77,6 +78,8 @@ class IngestionPipeline:
     graph_extractor_revision: str = "graph-v1"
     mirrors: tuple[IndexMirror, ...] = ()
     """Real stores to write a validated index version into, before it is activated."""
+    originals: OriginalStore | None = None
+    """Where the immutable original is kept, addressed by its content hash."""
 
     def ingest(self, registration: SourceRegistration, content: str) -> IngestionResult:
         digest = content_hash(content)
@@ -84,6 +87,7 @@ class IngestionPipeline:
         if reused is not None:
             return reused
 
+        original_key = self._store_original(registration, content, digest)
         source_version = self._register_source_version(registration, content, digest)
         processed = self.pii.process(content, registration.pii_policy, registration.tenant_id)
         new_chunks, duplicates = self._build_chunks(source_version, processed.text)
@@ -109,6 +113,7 @@ class IngestionPipeline:
         self.catalog.mark_validated(index_version.index_version_id)
         checks = checks + self._mirror(index_version, chunks)
         activated = self.catalog.activate(index_version.index_version_id)
+        checks = checks + self._apply_original_retention(registration, original_key)
 
         return IngestionResult(
             source_version=source_version,
@@ -274,6 +279,25 @@ class IngestionPipeline:
         if pii_policy.mode == "pseudonymize":
             checks.append("pii_pseudonymized")
         return tuple(checks)
+
+    def _store_original(
+        self, registration: SourceRegistration, content: str, digest: str
+    ) -> str | None:
+        if self.originals is None:
+            return None
+        return self.originals.put(
+            registration.tenant_id, registration.source_id, digest, content
+        )
+
+    def _apply_original_retention(
+        self, registration: SourceRegistration, original_key: str | None
+    ) -> tuple[str, ...]:
+        if self.originals is None or original_key is None:
+            return ()
+        if registration.retention.delete_original_after_indexing:
+            self.originals.delete(original_key)
+            return ("original_deleted_by_retention_policy",)
+        return (f"original_stored:{original_key}",)
 
     def _mirror(
         self, index_version: IndexVersion, chunks: tuple[DocumentChunk, ...]

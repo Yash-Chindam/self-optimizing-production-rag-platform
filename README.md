@@ -108,23 +108,27 @@ against its own test corpus rather than through the HTTP API.
 
 ## Production stores
 
-Qdrant and OpenSearch adapters implement the protocols retrieval already depends on, so running
-on the real stores changes no retrieval, workflow or authorization code (specification sections
-6 and 8):
+Adapters for Qdrant, OpenSearch, Neo4j, PostgreSQL, MinIO and Redis implement the protocols the
+platform already depends on, so running on the real stores changes no retrieval, workflow or
+authorization code (specification sections 6, 7, 8 and 18):
 
 ```bash
 python -m pip install -e ".[dev,stores]"
-docker compose up -d qdrant opensearch
-RAG_QDRANT_URL=http://127.0.0.1:6333 RAG_OPENSEARCH_URL=http://127.0.0.1:9200 \
-  pytest tests/integration/test_stores.py
+docker compose up -d --wait
+set -a && . deploy/local.env && set +a
+pytest tests/integration/test_stores.py tests/integration/test_services.py --no-cov
 ```
 
-| Adapter | Protocol it satisfies | Role |
+| Adapter | Protocol or base it satisfies | Role |
 |---|---|---|
 | `QdrantDenseIndex` | `DenseIndex` | Vector search, one collection per `IndexVersion` |
 | `OpenSearchSparseIndex` | `SparseIndex` | BM25, one index per `IndexVersion` |
 | `CompositeChunkRepository` | `ChunkRepository` | Presents both halves to `HybridRetriever` |
-| `QdrantMirror` / `OpenSearchMirror` | `IndexMirror` | Ingestion's "build the indexes" step |
+| `Neo4jGraphRetriever` | `GraphExpander` | Entity and provenance graph, one subgraph per `IndexVersion` |
+| `QdrantMirror` / `OpenSearchMirror` / `Neo4jGraphMirror` | `IndexMirror` | Ingestion's "build the indexes" step |
+| `PostgresIndexCatalog` | `IndexCatalog` | Durable source, index-version and lineage metadata |
+| `MinioOriginalStore` | `OriginalStore` | Immutable, content-addressed originals |
+| `RedisAnswerCache` + `CachedQueryService` | `AnswerCache` | Answer cache keyed by everything that produced the answer |
 | `HashingEmbedder` / `SentenceTransformerEmbedder` | `TextEmbedder` | Versioned embeddings |
 
 Two properties are worth calling out because they are what the tests are about.
@@ -144,6 +148,21 @@ from the version fingerprint. A new index version is therefore written into its 
 and only then activated, so activation and rollback switch between whole indexes instead of
 mutating the one serving traffic. If a store refuses the write, the index version is retired and
 the previous one keeps answering.
+
+**The graph means the same thing in either store.** `Neo4jGraphRetriever` and the in-process
+`GraphRetriever` share one extractor, and an integration test asserts they return the same
+expansion for the same seeds at every depth — including the case a Cypher path cannot express on
+its own, walking out and back to the seed entity.
+
+**The catalog is durable, not different.** `PostgresIndexCatalog` inherits the staging,
+validation, activation and rollback rules and adds write-through persistence, so the metadata
+survives a restart and rollback still needs no reingestion.
+
+**A cached answer is only reused when nothing that produced it changed.** The cache key covers
+the tenant, the caller's exact label set, the question, the configuration version, the program
+revisions and the active index version, so activation, rollback or promotion miss the cache by
+construction, and two callers with different labels never share an entry. Redis sits behind a
+`CircuitBreaker`: if it is down, queries are answered directly.
 
 Embeddings are versioned because the revision is part of an `IndexVersion`'s fingerprint.
 `HashingEmbedder` is the default: a genuine vector embedding (feature hashing over token
