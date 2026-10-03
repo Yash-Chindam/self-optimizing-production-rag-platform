@@ -63,6 +63,7 @@ class AnswerTrace(BaseModel):
     repair_attempts: int = 0
     unsupported_claims: list[str] = []
     degraded_dependencies: list[str] = []
+    served_from_cache: bool = False
 
 
 class QueryResponse(BaseModel):

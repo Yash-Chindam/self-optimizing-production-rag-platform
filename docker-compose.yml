@@ -52,6 +52,65 @@ services:
       timeout: 3s
       retries: 30
 
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      - NEO4J_AUTH=neo4j/local-dev-only
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    volumes:
+      - neo4j-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "cypher-shell -u neo4j -p local-dev-only 'RETURN 1' || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 40
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      - POSTGRES_USER=rag
+      - POSTGRES_PASSWORD=local-dev-only
+      - POSTGRES_DB=rag
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U rag -d rag"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    # MinIO no longer publishes its own images to a public registry; this is a maintained
+    # community build of the same server, pinned to a release.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    entrypoint: ["minio"]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      - MINIO_ROOT_USER=rag-local
+      - MINIO_ROOT_PASSWORD=local-dev-only
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
 volumes:
   qdrant-data:
   opensearch-data:
+  neo4j-data:
+  postgres-data:
+  minio-data:
