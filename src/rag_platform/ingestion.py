@@ -10,6 +10,7 @@ does not create a second index version.
 from dataclasses import dataclass, field
 from hashlib import blake2s, sha256
 
+from rag_platform.adapters.mirror import IndexMirror
 from rag_platform.catalog import IndexCatalog
 from rag_platform.chunking import build_pieces
 from rag_platform.models import (
@@ -74,6 +75,8 @@ class IngestionPipeline:
     embedding_revision: str = "embed-v1"
     analyzer_revision: str = "analyzer-v1"
     graph_extractor_revision: str = "graph-v1"
+    mirrors: tuple[IndexMirror, ...] = ()
+    """Real stores to write a validated index version into, before it is activated."""
 
     def ingest(self, registration: SourceRegistration, content: str) -> IngestionResult:
         digest = content_hash(content)
@@ -104,6 +107,7 @@ class IngestionPipeline:
 
         checks = self.validate(index_version, chunks, registration.pii_policy)
         self.catalog.mark_validated(index_version.index_version_id)
+        checks = checks + self._mirror(index_version, chunks)
         activated = self.catalog.activate(index_version.index_version_id)
 
         return IngestionResult(
@@ -270,6 +274,26 @@ class IngestionPipeline:
         if pii_policy.mode == "pseudonymize":
             checks.append("pii_pseudonymized")
         return tuple(checks)
+
+    def _mirror(
+        self, index_version: IndexVersion, chunks: tuple[DocumentChunk, ...]
+    ) -> tuple[str, ...]:
+        """Write the validated index version into every configured store.
+
+        A store that refuses the write retires the index version rather than letting it
+        activate, so retrieval never points at an index that was only partly built.
+        """
+        written: list[str] = []
+        for mirror in self.mirrors:
+            try:
+                report = mirror.mirror(index_version, chunks)
+            except Exception as error:
+                self.catalog.retire(index_version.index_version_id)
+                raise IngestionValidationError(
+                    f"mirroring index version {index_version.index_version_id} failed: {error}"
+                ) from error
+            written.append(f"mirrored:{report.physical_index}:{report.chunks_written}")
+        return tuple(written)
 
     def _reject(self, index_version: IndexVersion, reason: str) -> None:
         self.catalog.retire(index_version.index_version_id)

@@ -5,11 +5,14 @@ This repository is the executable implementation of the architecture in
 It provides versioned ingestion, tenant-aware hybrid retrieval, citation-or-abstention
 behavior, and a small browser client.
 
-The stores and models are deterministic in-process implementations that sit behind the same
-boundaries the production adapters use: `IndexCatalog` stands in for PostgreSQL plus the
-Qdrant, OpenSearch and Neo4j indexes, and `PiiProcessor` stands in for a Presidio analyzer.
+By default the stores and models are deterministic in-process implementations that sit behind
+the same boundaries the production adapters use: `IndexCatalog` stands in for PostgreSQL plus
+the Qdrant, OpenSearch and Neo4j indexes, and `PiiProcessor` stands in for a Presidio analyzer.
 Swapping an adapter does not change the ingestion contract, the authorization filters or the
 index-version lifecycle.
+
+Real adapters for those stores live in `rag_platform.adapters` and install through the `stores`
+extra — see [Production stores](#production-stores).
 
 ## Run locally
 
@@ -102,6 +105,52 @@ rollback apply to the production configuration the same way they apply to an ind
 Optimization runs outside production (section 3, "Optimization service"): nothing in this
 module changes which configuration answers a live query, so it is exercised as a library
 against its own test corpus rather than through the HTTP API.
+
+## Production stores
+
+Qdrant and OpenSearch adapters implement the protocols retrieval already depends on, so running
+on the real stores changes no retrieval, workflow or authorization code (specification sections
+6 and 8):
+
+```bash
+python -m pip install -e ".[dev,stores]"
+docker compose up -d qdrant opensearch
+RAG_QDRANT_URL=http://127.0.0.1:6333 RAG_OPENSEARCH_URL=http://127.0.0.1:9200 \
+  pytest tests/integration/test_stores.py
+```
+
+| Adapter | Protocol it satisfies | Role |
+|---|---|---|
+| `QdrantDenseIndex` | `DenseIndex` | Vector search, one collection per `IndexVersion` |
+| `OpenSearchSparseIndex` | `SparseIndex` | BM25, one index per `IndexVersion` |
+| `CompositeChunkRepository` | `ChunkRepository` | Presents both halves to `HybridRetriever` |
+| `QdrantMirror` / `OpenSearchMirror` | `IndexMirror` | Ingestion's "build the indexes" step |
+| `HashingEmbedder` / `SentenceTransformerEmbedder` | `TextEmbedder` | Versioned embeddings |
+
+Two properties are worth calling out because they are what the tests are about.
+
+**The database is never the authorization boundary.** Specification section 4 puts that out of
+scope deliberately, so every adapter sends the tenant filter to the store *and* re-applies the
+authoritative `is_authorized` check in Python before a chunk leaves the adapter. A store that is
+stale, misconfigured or simply wrong cannot widen access on its own. OpenSearch can express the
+label subset test exactly (`terms_set` against `required_label_count`); Qdrant cannot, so there
+the store filter only narrows and the Python check decides. The integration tests assert the
+outcome is identical either way, including that a chunk labelled `finance` *and* `management` is
+withheld from a caller holding only `finance`.
+
+**Index versions stay immutable.** Each adapter addresses the store by the `physical_dense_index`
+/ `physical_sparse_index` identifier its `IndexVersion` already records, and that name is derived
+from the version fingerprint. A new index version is therefore written into its own collection
+and only then activated, so activation and rollback switch between whole indexes instead of
+mutating the one serving traffic. If a store refuses the write, the index version is retired and
+the previous one keeps answering.
+
+Embeddings are versioned because the revision is part of an `IndexVersion`'s fingerprint.
+`HashingEmbedder` is the default: a genuine vector embedding (feature hashing over token
+unigrams and bigrams, L2-normalized) that needs no model download, so the stores can be populated
+and queried offline. It captures lexical and co-occurrence similarity, not learned semantics —
+install the `embeddings` extra and use `SentenceTransformerEmbedder` for that, behind the same
+protocol.
 
 ## Reliability
 
