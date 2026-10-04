@@ -128,6 +128,8 @@ module = [
   "dspy.*",
   "presidio_analyzer",
   "presidio_analyzer.*",
+  "deprecated",
+  "deprecated.*",
 ]
 follow_imports = "skip"
 follow_imports_for_stubs = true

@@ -59,6 +59,10 @@ def client(tmp_path: Path) -> Any:
     return tracking
 
 
+def registry_for(client: Any, tmp_path: Path) -> MlflowConfigRegistry:
+    return MlflowConfigRegistry(client, artifact_location=(tmp_path / "registry").as_uri())
+
+
 def candidate_run(
     config: PipelineConfig = CANDIDATE,
     *,
@@ -174,25 +178,25 @@ def test_metrics_and_parameters_cover_the_whole_summary_and_configuration() -> N
 # Registry ----------------------------------------------------------------------
 
 
-def test_the_first_configuration_becomes_the_champion(client: Any) -> None:
-    registry = MlflowConfigRegistry(client)
+def test_the_first_configuration_becomes_the_champion(client: Any, tmp_path: Path) -> None:
+    registry = registry_for(client, tmp_path)
     assert registry.ensure(BASELINE) == BASELINE
     assert registry.active() == BASELINE
     assert str(client.get_model_version_by_alias(registry.name, CHAMPION).version) == "1"
 
 
-def test_an_existing_champion_survives_a_restart(client: Any) -> None:
-    registry = MlflowConfigRegistry(client)
+def test_an_existing_champion_survives_a_restart(client: Any, tmp_path: Path) -> None:
+    registry = registry_for(client, tmp_path)
     registry.ensure(BASELINE)
     registry.register(CANDIDATE)
     registry.promote(CANDIDATE.version)
 
     # A new process constructs a new registry and offers its defaults again.
-    assert MlflowConfigRegistry(client).ensure(BASELINE) == CANDIDATE
+    assert registry_for(client, tmp_path).ensure(BASELINE) == CANDIDATE
 
 
-def test_promotion_moves_the_champion_and_rollback_restores_it(client: Any) -> None:
-    registry = MlflowConfigRegistry(client)
+def test_promotion_moves_the_champion_and_rollback_restores_it(client: Any, tmp_path: Path) -> None:
+    registry = registry_for(client, tmp_path)
     registry.ensure(BASELINE)
     registry.register(CANDIDATE)
     registry.register(OTHER)
@@ -205,39 +209,41 @@ def test_promotion_moves_the_champion_and_rollback_restores_it(client: Any) -> N
     assert registry.active() == BASELINE
 
 
-def test_rollback_without_history_is_refused(client: Any) -> None:
-    registry = MlflowConfigRegistry(client)
+def test_rollback_without_history_is_refused(client: Any, tmp_path: Path) -> None:
+    registry = registry_for(client, tmp_path)
     registry.ensure(BASELINE)
     with pytest.raises(ConfigPromotionError):
         registry.rollback()
 
 
-def test_promoting_the_active_configuration_adds_no_history(client: Any) -> None:
-    registry = MlflowConfigRegistry(client)
+def test_promoting_the_active_configuration_adds_no_history(client: Any, tmp_path: Path) -> None:
+    registry = registry_for(client, tmp_path)
     registry.ensure(BASELINE)
     registry.promote(BASELINE.version)
     with pytest.raises(ConfigPromotionError):
         registry.rollback()
 
 
-def test_an_unregistered_configuration_cannot_be_promoted(client: Any) -> None:
-    registry = MlflowConfigRegistry(client)
+def test_an_unregistered_configuration_cannot_be_promoted(client: Any, tmp_path: Path) -> None:
+    registry = registry_for(client, tmp_path)
     registry.ensure(BASELINE)
     with pytest.raises(UnknownConfigVersionError):
         registry.promote("pipeline-v9")
 
 
-def test_registering_a_version_twice_keeps_one_model_version(client: Any) -> None:
-    registry = MlflowConfigRegistry(client)
+def test_registering_a_version_twice_keeps_one_model_version(client: Any, tmp_path: Path) -> None:
+    registry = registry_for(client, tmp_path)
     registry.ensure(BASELINE)
     registry.register(CANDIDATE)
     registry.register(CANDIDATE)
     assert registry.versions() == (BASELINE, CANDIDATE)
 
 
-def test_a_registered_configuration_links_back_to_the_run_that_evaluated_it(client: Any) -> None:
+def test_a_registered_configuration_links_back_to_the_run_that_evaluated_it(
+    client: Any, tmp_path: Path
+) -> None:
     run_id = MlflowRunLogger(client).log_candidate(candidate_run())
-    registry = MlflowConfigRegistry(client)
+    registry = registry_for(client, tmp_path)
     registry.register(CANDIDATE, mlflow_run_id=run_id)
 
     [version] = client.search_model_versions(f"name='{registry.name}'")
@@ -245,8 +251,20 @@ def test_a_registered_configuration_links_back_to_the_run_that_evaluated_it(clie
     assert version.source == f"runs:/{run_id}/pipeline_config.json"
 
 
-def test_nothing_is_active_before_anything_is_promoted(client: Any) -> None:
-    registry = MlflowConfigRegistry(client)
+def test_nothing_is_active_before_anything_is_promoted(client: Any, tmp_path: Path) -> None:
+    registry = registry_for(client, tmp_path)
     registry.register(CANDIDATE)
     with pytest.raises(ConfigPromotionError):
         registry.active()
+
+
+def test_a_configuration_registered_on_its_own_still_points_at_a_real_artifact(
+    client: Any, tmp_path: Path
+) -> None:
+    registry = registry_for(client, tmp_path)
+    registry.ensure(BASELINE)
+
+    [version] = client.search_model_versions(f"name='{registry.name}'")
+    downloaded = client.download_artifacts(version.run_id, "pipeline_config.json", str(tmp_path))
+    assert PipelineConfig.model_validate_json(Path(downloaded).read_text("utf-8")) == BASELINE
+    assert client.get_run(version.run_id).data.tags["rag.kind"] == "configuration"

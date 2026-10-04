@@ -139,6 +139,7 @@ class MlflowConfigRegistry:
 
     client: "MlflowClient"
     name: str = "rag-pipeline-config"
+    artifact_location: str | None = None
 
     def ensure(self, initial: PipelineConfig) -> PipelineConfig:
         """Create the registry on first use and return whichever configuration is active."""
@@ -156,15 +157,11 @@ class MlflowConfigRegistry:
         """Keep a configuration for audit. Registering the same version twice is a no-op."""
         self._ensure_model()
         if self._find(config.version) is None:
-            source = (
-                f"runs:/{mlflow_run_id}/{CONFIG_ARTIFACT}"
-                if mlflow_run_id is not None
-                else f"rag-pipeline-config://{config.version}"
-            )
+            run_id = mlflow_run_id or self._config_run(config)
             self.client.create_model_version(
                 self.name,
-                source=source,
-                run_id=mlflow_run_id,
+                source=f"runs:/{run_id}/{CONFIG_ARTIFACT}",
+                run_id=run_id,
                 tags={_VERSION_TAG: config.version, _CONFIG_TAG: config.model_dump_json()},
             )
         return config
@@ -200,6 +197,30 @@ class MlflowConfigRegistry:
         return tuple(_config_of(item) for item in ordered)
 
     # Internals ---------------------------------------------------------------
+    def _config_run(self, config: PipelineConfig) -> str:
+        """A run that holds the configuration, for one registered outside an optimization.
+
+        A model version has to point at a real artifact, so a configuration that no evaluation
+        run produced (the initial one) gets a run of its own.
+        """
+        existing = self.client.get_experiment_by_name(self.name)
+        experiment_id = (
+            str(existing.experiment_id)
+            if existing is not None
+            else str(
+                self.client.create_experiment(self.name, artifact_location=self.artifact_location)
+            )
+        )
+        created = self.client.create_run(
+            experiment_id,
+            run_name=f"config-{config.version}",
+            tags={"rag.kind": "configuration", _VERSION_TAG: config.version},
+        )
+        run_id = str(created.info.run_id)
+        self.client.log_dict(run_id, config.model_dump(mode="json"), CONFIG_ARTIFACT)
+        self.client.set_terminated(run_id)
+        return run_id
+
     def _ensure_model(self) -> None:
         from mlflow.exceptions import MlflowException
 

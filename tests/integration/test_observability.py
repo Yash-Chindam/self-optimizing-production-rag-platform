@@ -29,6 +29,18 @@ def get_json(url: str) -> Any:
         return json.loads(response.read().decode("utf-8"))
 
 
+def flatten(value: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """Phoenix may return attributes nested by dotted key; compare on the flat form."""
+    flat: dict[str, Any] = {}
+    for key, item in value.items():
+        name = f"{prefix}{key}"
+        if isinstance(item, dict):
+            flat.update(flatten(item, f"{name}."))
+        else:
+            flat[name] = item
+    return flat
+
+
 def phoenix_spans(project: str) -> list[dict[str, Any]]:
     try:
         payload = get_json(f"{PHOENIX_URL}/v1/projects/{project}/spans?limit=100")
@@ -74,8 +86,10 @@ def test_a_query_trace_reaches_phoenix_through_the_collector() -> None:
     names = {span["name"] for span in spans}
     assert names == {"rag.query"} | {f"rag.{state}" for state in response.trace.workflow_path}
     root = next(span for span in spans if span["name"] == "rag.query")
-    assert root["attributes"]["rag.status"] == "answered"
-    assert root["attributes"]["openinference.span.kind"] == "CHAIN"
+    attributes = flatten(root["attributes"])
+    assert attributes["rag.status"] == "answered"
+    assert attributes["rag.tenant_id"] == "tenant-acme"
+    assert (attributes.get("openinference.span.kind") or root.get("span_kind")) == "CHAIN"
     assert "jane.doe@example.com" not in json.dumps(spans)
     provider.shutdown()
 
