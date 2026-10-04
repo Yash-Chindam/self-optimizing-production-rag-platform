@@ -42,6 +42,7 @@ source versioning, chunking, sensitive-data processing and staged index activati
 | `GET /v1/feedback` | List a tenant's feedback. Requires the `data-steward` label. |
 | `POST /v1/feedback/{id}/review` | Accept or dismiss feedback as a named reviewer. |
 | `GET /healthz` | Report the active pipeline configuration version. |
+| `GET /readyz` | Report readiness and the configured external dependencies. |
 
 ## Ingestion
 
@@ -345,6 +346,68 @@ from rag_platform.adapters.prefect_flows import evaluation_flow
 evaluation_flow("data/evaluation/cases.jsonl", mlflow_tracking_uri="http://127.0.0.1:5000")
 ```
 
+## Configuration and deployment
+
+**Runtime configuration.** `rag_platform.settings.Settings.from_env` reads the environment once
+at start-up and `rag_platform.runtime.build_runtime` assembles the platform from it. With
+nothing set the platform runs in-process; each variable swaps one boundary to its production
+adapter. An unusable value is a start-up error that names the variable.
+
+| Variable | Selects |
+|---|---|
+| `RAG_POSTGRES_DSN` | Durable catalog and feedback log. Loaded on start; replicas follow each other's activations within `RAG_CATALOG_SYNC_SECONDS`. |
+| `RAG_QDRANT_URL`, `RAG_OPENSEARCH_URL`, `RAG_NEO4J_URL` (+ `RAG_NEO4J_USER`, `RAG_NEO4J_PASSWORD`) | Dense, sparse and graph stores. Ingestion writes each index version to its own collection, index and subgraph; queries read whichever version is active. An unconfigured leg is served from the catalog. |
+| `RAG_MINIO_ENDPOINT` (+ `RAG_MINIO_ACCESS_KEY`, `RAG_MINIO_SECRET_KEY`, `RAG_MINIO_SECURE`, `RAG_MINIO_BUCKET`) | Immutable originals. |
+| `RAG_REDIS_URL` (+ `RAG_CACHE_TTL_SECONDS`) | Answer cache. |
+| `RAG_KAFKA_BOOTSTRAP_SERVERS` (+ `RAG_KAFKA_TOPIC_PREFIX`) | Event publishing. |
+| `RAG_OTLP_ENDPOINT` (+ `RAG_TRACE_SAMPLE_RATIO`, `RAG_TRACE_CAPTURE_TEXT`) | Tracing. Question and answer text is exported only if `RAG_TRACE_CAPTURE_TEXT=true`. |
+| `RAG_PII_RECOGNIZER=presidio` | Presidio recognition. |
+| `RAG_LLM_MODEL` (+ `RAG_PROGRAM_ARTIFACTS`) | DSPy language programs on that model. |
+| `RAG_WORKFLOW_EXECUTOR=langgraph`, `RAG_CHUNKER=llamaindex`, `RAG_EMBEDDER=sentence-transformers` | LangGraph executor, LlamaIndex chunking, learned embeddings. |
+| `RAG_MLFLOW_TRACKING_URI` | Reported by `/readyz`; pass it to `evaluate`/`optimize` or the flows to record runs. |
+| `RAG_SEED_DEMO_SOURCES` | Ingest the demo corpus on start. Defaults to on only without a durable catalog. |
+
+`GET /readyz` is served once start-up has connected to every configured dependency and lists
+them. The API, the `evaluate` and `optimize` commands and the Prefect flows all assemble the
+platform this way. `deploy/local.env` holds the values for the local compose stack:
+
+```bash
+docker compose up -d --wait
+set -a && . deploy/local.env && set +a
+python -m pip install -e ".[stores,observability,events]"
+python -m rag_platform
+```
+
+**Container image.** The default image runs in-process. Build with the extras a deployment's
+settings need: `docker build --build-arg RAG_EXTRAS=stores,observability,events,workflow .`
+
+**Kubernetes.** `deploy/helm/rag-platform` is the Helm chart for the topology in specification
+section 18.
+
+- API `Deployment` (non-root, read-only root filesystem, no service-account token), `Service`,
+  `HorizontalPodAutoscaler`, `PodDisruptionBudget`, `NetworkPolicy`, optional `Ingress`.
+- Settings in a `ConfigMap`, credentials from `secrets.existingSecret` (recommended) or a chart
+  managed `Secret`; pods roll when either changes.
+- Optional OpenTelemetry Collector, a scheduled evaluation `CronJob` that fails when the release
+  gate fails, and a Prefect worker.
+- `endpoints.*` points at services you already run. `backingServices.enabled=true` instead runs
+  PostgreSQL, Qdrant, OpenSearch, Neo4j, MinIO, Redis, Kafka, Phoenix, MLflow and Prefect
+  in-cluster as single-replica development instances and wires the application to them; it
+  requires an explicit `backingServices.devPassword` and is not for production data.
+
+```bash
+helm upgrade --install rag deploy/helm/rag-platform --set image.tag=1.0.0
+helm test rag
+# whole topology in one namespace, for development:
+helm upgrade --install rag deploy/helm/rag-platform -f deploy/helm/rag-platform/values-dev.yaml
+```
+
+The API trusts `X-Tenant-ID` and `X-Access-Labels`. Only an identity gateway that derives and
+overwrites them may reach it; list it in `networkPolicy.ingressFrom`.
+
+CI lints the chart, validates every manifest of the full topology against a Kubernetes API
+server, installs the chart on a kind cluster and runs `helm test` against the running API.
+
 ## Reliability
 
 Graph expansion, reranking, answer synthesis and claim verification are all optional
@@ -378,6 +441,6 @@ layers and verifies the production container build.
 All changes are made on a branch and delivered by pull request. The CI workflow is the required
 quality gate. Successful repository-owner and Dependabot pull requests are merged automatically
 after CI while preserving their individual commits. Repository branch protection should require
-the `CI / Python quality and tests`, `CI / Playwright end-to-end`, and `CI / Container build`
-checks.
+the `CI / Python quality and tests`, `CI / Playwright end-to-end`, `CI / Store adapters`,
+`CI / Container build` and `CI / Helm chart on Kubernetes` checks.
 

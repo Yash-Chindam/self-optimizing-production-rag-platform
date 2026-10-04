@@ -7,6 +7,7 @@ Ingestion is idempotent: re-ingesting identical content reuses the existing sour
 does not create a second index version.
 """
 
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from hashlib import blake2s, sha256
@@ -54,6 +55,17 @@ class IngestionResult:
     source_version: SourceVersion
     index_version: IndexVersion
     report: IngestionReport
+
+
+def physical_index_name(store: str, tenant_id: str, fingerprint: str) -> str:
+    """A name every store accepts as a collection, index or graph identifier.
+
+    Qdrant and OpenSearch both reject ":" and OpenSearch requires lower case, so the name is
+    lower-case letters, digits, "-" and "_" only. The fingerprint keeps it unique even when two
+    tenant ids sanitize to the same text.
+    """
+    tenant = re.sub(r"[^a-z0-9_-]", "-", tenant_id.lower())
+    return f"{store}-{tenant}-{fingerprint}"
 
 
 def content_hash(content: str) -> str:
@@ -285,9 +297,9 @@ class IngestionPipeline:
             embedding_revision=self.embedding_revision,
             analyzer_revision=self.analyzer_revision,
             graph_extractor_revision=self.graph_extractor_revision,
-            physical_dense_index=f"qdrant:{tenant_id}:{fingerprint}",
-            physical_sparse_index=f"opensearch:{tenant_id}:{fingerprint}",
-            physical_graph_index=f"neo4j:{tenant_id}:{fingerprint}",
+            physical_dense_index=physical_index_name("qdrant", tenant_id, fingerprint),
+            physical_sparse_index=physical_index_name("opensearch", tenant_id, fingerprint),
+            physical_graph_index=physical_index_name("neo4j", tenant_id, fingerprint),
             chunk_count=chunk_count,
         )
 

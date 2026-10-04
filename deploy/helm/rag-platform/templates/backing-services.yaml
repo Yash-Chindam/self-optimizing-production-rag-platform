@@ -1,0 +1,91 @@
+{{- if .Values.backingServices.enabled }}
+{{- $root := . }}
+{{- $fullname := include "rag.fullname" . }}
+{{- range $name, $service := .Values.backingServices.services }}
+{{- if $service.enabled }}
+---
+# Development instance of {{ $name }}: single replica, no backup. See values.yaml.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $fullname }}-{{ $name }}
+  labels:
+    {{- include "rag.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  serviceName: {{ $fullname }}-{{ $name }}
+  replicas: 1
+  selector:
+    matchLabels:
+      {{- include "rag.selectorLabels" $root | nindent 6 }}
+      app.kubernetes.io/component: {{ $name }}
+  template:
+    metadata:
+      labels:
+        {{- include "rag.selectorLabels" $root | nindent 8 }}
+        app.kubernetes.io/component: {{ $name }}
+    spec:
+      automountServiceAccountToken: false
+      {{- with $service.fsGroup }}
+      securityContext:
+        fsGroup: {{ . }}
+      {{- end }}
+      containers:
+        - name: {{ $name }}
+          image: {{ $service.image | quote }}
+          {{- with $service.command }}
+          command:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $service.args }}
+          args:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with $service.env }}
+          env:
+            {{- range $key, $value := . }}
+            - name: {{ $key }}
+              value: {{ tpl (toString $value) $root | quote }}
+            {{- end }}
+          {{- end }}
+          ports:
+            - name: main
+              containerPort: {{ $service.port }}
+          readinessProbe:
+            tcpSocket:
+              port: main
+            periodSeconds: 5
+            failureThreshold: 60
+          volumeMounts:
+            - name: data
+              mountPath: {{ $service.mountPath }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        {{- with $root.Values.backingServices.storageClassName }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $service.storage }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-{{ $name }}
+  labels:
+    {{- include "rag.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+spec:
+  ports:
+    - name: main
+      port: {{ $service.port }}
+      targetPort: main
+  selector:
+    {{- include "rag.selectorLabels" $root | nindent 4 }}
+    app.kubernetes.io/component: {{ $name }}
+{{- end }}
+{{- end }}
+{{- end }}

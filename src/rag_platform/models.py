@@ -85,6 +85,12 @@ class HealthResponse(BaseModel):
     config_version: str
 
 
+class ReadinessResponse(BaseModel):
+    status: Literal["ready"] = "ready"
+    dependencies: list[str] = []
+    """The external services this process is configured to use."""
+
+
 class PipelineConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 

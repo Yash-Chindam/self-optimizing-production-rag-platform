@@ -1,0 +1,13 @@
+{{ include "rag.fullname" . }} is installed.
+
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "rag.fullname" . }} 8000:{{ .Values.service.port }}
+  curl http://127.0.0.1:8000/readyz
+  helm -n {{ .Release.Namespace }} test {{ .Release.Name }}
+
+The API trusts the X-Tenant-ID and X-Access-Labels headers. Only an identity gateway that
+derives and overwrites them may reach it; list that gateway in networkPolicy.ingressFrom.
+{{- if .Values.backingServices.enabled }}
+
+backingServices is enabled: the stores run in-cluster as single-replica development instances
+with a shared development password. Do not use this for production data.
+{{- end }}

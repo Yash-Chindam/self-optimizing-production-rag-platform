@@ -1,3 +1,4 @@
+import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -6,7 +7,7 @@ from typing import Annotated
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse
 
-from rag_platform.bootstrap import Platform, build_platform
+from rag_platform.bootstrap import Platform
 from rag_platform.catalog import IndexActivationError
 from rag_platform.feedback import (
     Feedback,
@@ -26,8 +27,11 @@ from rag_platform.models import (
     IngestResponse,
     QueryRequest,
     QueryResponse,
+    ReadinessResponse,
     SourceRegistration,
 )
+from rag_platform.runtime import build_runtime
+from rag_platform.settings import Settings
 
 STATIC_ROOT = Path(__file__).parent / "static"
 STEWARD_LABEL = "data-steward"
@@ -57,14 +61,24 @@ def require_steward(access: Annotated[AccessContext, Depends(access_context)]) -
 def create_app(platform: Platform | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        resolved = platform or build_platform()
+        # An injected platform is the caller's to manage; otherwise assemble from the
+        # environment and release connections and flush telemetry on shutdown.
+        runtime = None if platform is not None else build_runtime(Settings.from_env(os.environ))
+        resolved = platform or runtime.platform  # type: ignore[union-attr]
         app.state.platform = resolved
         app.state.query_service = resolved.query_service
-        yield
+        app.state.dependencies = (
+            runtime.settings.configured_dependencies() if runtime is not None else ()
+        )
+        try:
+            yield
+        finally:
+            if runtime is not None:
+                runtime.close()
 
     application = FastAPI(
         title="Self-Optimizing RAG Platform",
-        version="0.11.0",
+        version="1.0.0",
         lifespan=lifespan,
     )
 
@@ -75,6 +89,11 @@ def create_app(platform: Platform | None = None) -> FastAPI:
     @application.get("/healthz", response_model=HealthResponse)
     def health(request: Request) -> HealthResponse:
         return HealthResponse(config_version=_platform(request).config.version)
+
+    @application.get("/readyz", response_model=ReadinessResponse)
+    def ready(request: Request) -> ReadinessResponse:
+        """Served only once start-up finished, so every configured store was reachable."""
+        return ReadinessResponse(dependencies=list(request.app.state.dependencies))
 
     @application.post("/v1/query", response_model=QueryResponse)
     def query(

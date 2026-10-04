@@ -1,0 +1,33 @@
+# The whole section 18 topology in one namespace, for development and review:
+#
+#   docker build --build-arg RAG_EXTRAS=stores,observability,events,workflow,ingestion,governance,orchestration,evaluation -t rag-platform:dev .
+#   helm upgrade --install rag deploy/helm/rag-platform -f deploy/helm/rag-platform/values-dev.yaml \
+#     --set image.tag=dev
+#
+# Local-development credentials only: they protect nothing.
+
+replicaCount: 1
+autoscaling:
+  enabled: false
+podDisruptionBudget:
+  enabled: false
+
+config:
+  workflowExecutor: langgraph
+  chunker: llamaindex
+  seedDemoSources: "true"
+  trace:
+    sampleRatio: "1.0"
+
+otelCollector:
+  enabled: true
+
+evaluation:
+  enabled: true
+
+prefectWorker:
+  enabled: true
+
+backingServices:
+  enabled: true
+  devPassword: local-dev-only

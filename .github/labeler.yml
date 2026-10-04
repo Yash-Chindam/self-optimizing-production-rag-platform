@@ -25,6 +25,7 @@
       - any-glob-to-any-file:
           - ".github/**"
           - "Dockerfile"
+          - "deploy/**"
 
 documentation:
   - changed-files:

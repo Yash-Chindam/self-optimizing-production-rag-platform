@@ -1,0 +1,98 @@
+{{- if .Values.evaluation.enabled }}
+# The release gate on a schedule: a failed gate is a failed Job.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "rag.fullname" . }}-evaluation
+  labels:
+    {{- include "rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: evaluation
+spec:
+  schedule: {{ .Values.evaluation.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      template:
+        metadata:
+          labels:
+            {{- include "rag.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: evaluation
+        spec:
+          {{- include "rag.podSpec" . | nindent 10 }}
+          restartPolicy: Never
+          containers:
+            - name: evaluate
+              image: {{ include "rag.image" . | quote }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              args:
+                - python
+                - -m
+                - rag_platform
+                - evaluate
+                - --dataset={{ .Values.evaluation.dataset }}
+                - --metrics=/tmp/reports/metrics.json
+                - --results=/tmp/reports/results.jsonl
+              envFrom:
+                {{- include "rag.envFrom" . | nindent 16 }}
+              resources:
+                {{- toYaml .Values.evaluation.resources | nindent 16 }}
+              volumeMounts:
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: tmp
+              emptyDir: {}
+{{- end }}
+{{- if .Values.prefectWorker.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "rag.fullname" . }}-prefect-worker
+  labels:
+    {{- include "rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: prefect-worker
+spec:
+  replicas: {{ .Values.prefectWorker.replicas }}
+  selector:
+    matchLabels:
+      {{- include "rag.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: prefect-worker
+  template:
+    metadata:
+      labels:
+        {{- include "rag.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: prefect-worker
+    spec:
+      {{- include "rag.podSpec" . | nindent 6 }}
+      containers:
+        - name: worker
+          image: {{ include "rag.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          args:
+            - prefect
+            - worker
+            - start
+            - --pool={{ .Values.prefectWorker.workPool }}
+            - --type=process
+          env:
+            - name: PREFECT_HOME
+              value: /tmp/prefect
+          envFrom:
+            {{- include "rag.envFrom" . | nindent 12 }}
+          resources:
+            {{- toYaml .Values.prefectWorker.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+{{- end }}

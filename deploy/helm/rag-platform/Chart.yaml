@@ -1,0 +1,13 @@
+apiVersion: v2
+name: rag-platform
+description: Self-optimizing, privacy-aware RAG platform (API, workers, collector and optional in-cluster stores)
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.27.0-0"
+keywords:
+  - rag
+  - retrieval
+  - llm
+maintainers:
+  - name: Yash-Chindam
