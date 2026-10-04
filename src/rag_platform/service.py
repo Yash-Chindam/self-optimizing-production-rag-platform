@@ -15,10 +15,11 @@ class QueryService:
         context_builder: ContextBuilder | None = None,
         programs: ProgramSuite | None = None,
         observer: WorkflowObserver | None = None,
+        workflow_class: type[QueryWorkflow] = QueryWorkflow,
     ) -> None:
         self.config = config
         self.programs = programs or ProgramSuite(revision=config.program_suite_revision)
-        self._workflow = QueryWorkflow(
+        self._workflow = workflow_class(
             retriever,
             config,
             context_builder or ContextBuilder(config),

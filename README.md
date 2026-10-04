@@ -281,6 +281,33 @@ restarted process reads the active configuration back.
 adapters` CI job runs `tests/integration/test_observability.py` against them and round-trips the
 DVC outputs through MinIO.
 
+## Workflow executor, ingestion composition and events
+
+Install with `python -m pip install -e ".[workflow,ingestion,events]"`.
+
+**LangGraph.** The states and every allowed edge between them are declared once in
+`rag_platform.workflow` (`TRANSITIONS`). `rag_platform.adapters.langgraph_workflow.
+LangGraphQueryWorkflow` runs those same state functions as a LangGraph `StateGraph`: one node
+per state and a conditional edge per declared transition, so clarification, repair and fallback
+are branches of the graph. Pass `workflow_class=LangGraphQueryWorkflow` to `QueryService` to use
+it. The answer and trace are identical under either executor; the equivalence tests assert that
+for every path. A state that routes outside the declared transitions raises
+`WorkflowTransitionError` under both.
+
+**LlamaIndex.** `IngestionPipeline.piece_builder` is the chunking seam.
+`rag_platform.adapters.llamaindex_ingestion.LlamaIndexPieceBuilder` composes LlamaIndex's
+`MarkdownNodeParser` and `SentenceSplitter`: sections follow the document structure and long
+sections are cut on sentence boundaries, within `ChunkingConfig.max_characters`. Its output is
+the same `ChunkPiece` contract, so identifiers, deduplication, parent links, validation and
+staged activation are unchanged.
+
+**Events.** `IngestionPipeline.events` receives `source.changed` and `ingestion.completed`
+(`rag_platform.events`). Events carry identifiers and counts, never document text.
+Publishing is best effort: a broker failure is recorded in the ingestion report's
+`validation_checks` and never fails or undoes the ingest.
+`rag_platform.adapters.kafka_events.KafkaEventPublisher` delivers them to Kafka, one topic per
+event type, keyed by tenant. `docker compose up -d kafka` starts a single-node broker.
+
 ## Reliability
 
 Graph expansion, reranking, answer synthesis and claim verification are all optional

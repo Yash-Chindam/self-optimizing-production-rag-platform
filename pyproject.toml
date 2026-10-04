@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "self-optimizing-rag-platform"
-version = "0.9.0"
+version = "0.10.0"
 description = "Evaluation-driven, privacy-aware RAG platform starter"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,6 +43,18 @@ privacy = [
 ]
 llm = [
   "dspy>=3.0,<4.0",
+]
+# LangGraph as the query workflow executor.
+workflow = [
+  "langgraph>=1.0,<2.0",
+]
+# LlamaIndex parsers and transformations for ingestion.
+ingestion = [
+  "llama-index-core>=0.12,<1.0",
+]
+# Optional Kafka transport for source-change, ingestion and evaluation events.
+events = [
+  "confluent-kafka>=2.6,<3.0",
 ]
 # OpenTelemetry tracing in OpenInference conventions, exported over OTLP to a collector.
 observability = [
@@ -130,6 +142,14 @@ module = [
   "presidio_analyzer.*",
   "deprecated",
   "deprecated.*",
+  "langgraph",
+  "langgraph.*",
+  "langchain_core",
+  "langchain_core.*",
+  "llama_index",
+  "llama_index.*",
+  "confluent_kafka",
+  "confluent_kafka.*",
 ]
 follow_imports = "skip"
 follow_imports_for_stubs = true
