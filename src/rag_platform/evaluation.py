@@ -12,10 +12,13 @@ missing evidence is `retrieval`, an ungrounded or forbidden claim is `citation`,
 grounded answer that omits an expected term is `generation`.
 """
 
+import hashlib
+import json
 import statistics
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 from rag_platform.models import (
@@ -200,3 +203,102 @@ def _summarize(results: Sequence[CaseResult]) -> EvaluationSummary:
 def _percentile(sorted_values: Sequence[float], fraction: float) -> float:
     index = min(len(sorted_values) - 1, int(len(sorted_values) * fraction))
     return sorted_values[index]
+
+
+# Versioned datasets -------------------------------------------------------------
+
+
+def load_cases(path: Path) -> tuple[EvaluationCase, ...]:
+    """Read a JSON Lines evaluation set. Blank lines are allowed; case ids must be unique."""
+    cases: list[EvaluationCase] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip():
+            cases.append(EvaluationCase.model_validate_json(line))
+    identifiers = [case.case_id for case in cases]
+    duplicates = sorted({item for item in identifiers if identifiers.count(item) > 1})
+    if duplicates:
+        raise ValueError(f"duplicate evaluation case ids: {', '.join(duplicates)}")
+    return tuple(cases)
+
+
+def dataset_revision(path: Path) -> str:
+    """The MD5 of the dataset file: the same content hash DVC records for it in dvc.lock.
+
+    Deriving the revision from the bytes means an evaluation result can never be attributed to
+    a dataset it was not run against, and that the revision MLflow shows is the one DVC tracks.
+    """
+    return hashlib.md5(path.read_bytes(), usedforsecurity=False).hexdigest()
+
+
+def reproducible_metrics(report: EvaluationReport) -> dict[str, object]:
+    """Summary metrics that depend only on data, configuration and code, never on timing."""
+    summary = report.summary
+    return {
+        "dataset_revision": report.dataset_revision,
+        "config_version": report.config_version,
+        "case_count": summary.case_count,
+        "passed_count": summary.passed_count,
+        "pass_rate": round(summary.pass_rate, 6),
+        "mean_recall_at_k": round(summary.mean_recall_at_k, 6),
+        "mean_reciprocal_rank": round(summary.mean_reciprocal_rank, 6),
+        "grounded_rate": round(summary.grounded_rate, 6),
+        "authorization_violations": summary.authorization_violations,
+    }
+
+
+def reproducible_results(report: EvaluationReport) -> list[dict[str, object]]:
+    return [
+        {
+            "case_id": result.case_id,
+            "passed": result.passed,
+            "status": result.status,
+            "recall_at_k": round(result.recall_at_k, 6),
+            "reciprocal_rank": round(result.reciprocal_rank, 6),
+            "grounded": result.grounded,
+            "authorization_violations": list(result.authorization_violations),
+            "failure_category": result.failure_category,
+        }
+        for result in report.results
+    ]
+
+
+def write_report(report: EvaluationReport, *, metrics: Path, results: Path) -> None:
+    """Write the timing-free report DVC tracks, byte-identical for identical inputs."""
+    metrics.parent.mkdir(parents=True, exist_ok=True)
+    results.parent.mkdir(parents=True, exist_ok=True)
+    with metrics.open("w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(reproducible_metrics(report), indent=2, sort_keys=True) + "\n")
+    with results.open("w", encoding="utf-8", newline="\n") as handle:
+        for row in reproducible_results(report):
+            handle.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+@dataclass(frozen=True, slots=True)
+class ReleaseGate:
+    """The evaluation thresholds a change must clear before it is released (section 16)."""
+
+    min_pass_rate: float = 1.0
+    min_grounded_rate: float = 1.0
+    max_authorization_violations: int = 0
+
+    def failures(self, report: EvaluationReport) -> tuple[str, ...]:
+        summary = report.summary
+        found: list[str] = []
+        if summary.case_count == 0:
+            found.append("the evaluation set is empty")
+        if summary.authorization_violations > self.max_authorization_violations:
+            found.append(
+                f"{summary.authorization_violations} unauthorized chunk(s) reached context"
+            )
+        if summary.pass_rate < self.min_pass_rate:
+            failed = ", ".join(result.case_id for result in report.failures())
+            found.append(
+                f"pass rate {summary.pass_rate:.2f} is below {self.min_pass_rate:.2f} "
+                f"(failed: {failed})"
+            )
+        if summary.grounded_rate < self.min_grounded_rate:
+            found.append(
+                f"grounded rate {summary.grounded_rate:.2f} is below "
+                f"{self.min_grounded_rate:.2f}"
+            )
+        return tuple(found)

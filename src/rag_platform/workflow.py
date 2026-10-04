@@ -6,8 +6,10 @@ recorded in its trace. This is the structure LangGraph owns in the deployed topo
 the state explicit here means swapping the executor does not change the states or their tests.
 """
 
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Protocol
 
 from rag_platform.context import ContextBuilder, ContextBundle
 from rag_platform.models import (
@@ -49,6 +51,60 @@ class WorkflowState:
     degraded_dependencies: list[str] = field(default_factory=list)
 
 
+class QueryObservation(Protocol):
+    """What one query reports to an observer as it moves through the workflow."""
+
+    @property
+    def trace_id(self) -> str | None:
+        """The exported trace this query belongs to, or None when it was not sampled."""
+        ...
+
+    def enter(self, node: str) -> None: ...
+
+    def leave(self, node: str, state: WorkflowState, next_node: str) -> None: ...
+
+    def finish(self, response: QueryResponse) -> None: ...
+
+    def fail(self, error: BaseException) -> None: ...
+
+
+class WorkflowObserver(Protocol):
+    """Observes queries without being able to change them (specification section 15).
+
+    The tracing adapter implements this with OpenTelemetry spans. The workflow depends only on
+    the protocol, so the core has no telemetry dependency and an untraced run costs nothing.
+    """
+
+    def start(
+        self, question: str, access: AccessContext, config: PipelineConfig
+    ) -> QueryObservation: ...
+
+
+class _NoObservation:
+    @property
+    def trace_id(self) -> str | None:
+        return None
+
+    def enter(self, node: str) -> None:
+        return None
+
+    def leave(self, node: str, state: WorkflowState, next_node: str) -> None:
+        return None
+
+    def finish(self, response: QueryResponse) -> None:
+        return None
+
+    def fail(self, error: BaseException) -> None:
+        return None
+
+
+class NullObserver:
+    def start(
+        self, question: str, access: AccessContext, config: PipelineConfig
+    ) -> QueryObservation:
+        return _NoObservation()
+
+
 class QueryWorkflow:
     def __init__(
         self,
@@ -58,6 +114,7 @@ class QueryWorkflow:
         programs: ProgramSuite | None = None,
         generator_breaker: CircuitBreaker | None = None,
         verifier_breaker: CircuitBreaker | None = None,
+        observer: WorkflowObserver | None = None,
     ) -> None:
         self._retriever = retriever
         self._config = config
@@ -65,8 +122,24 @@ class QueryWorkflow:
         self._programs = programs or ProgramSuite()
         self._generator_breaker = generator_breaker or CircuitBreaker(name="generator")
         self._verifier_breaker = verifier_breaker or CircuitBreaker(name="verifier")
+        self._observer = observer or NullObserver()
 
     def run(self, question: str, access: AccessContext) -> QueryResponse:
+        observation = self._observer.start(question, access, self._config)
+        started = time.perf_counter()
+        try:
+            response = self._execute(question, access, observation)
+        except BaseException as error:
+            observation.fail(error)
+            raise
+        response.trace.latency_ms = (time.perf_counter() - started) * 1000
+        response.trace.trace_id = observation.trace_id
+        observation.finish(response)
+        return response
+
+    def _execute(
+        self, question: str, access: AccessContext, observation: QueryObservation
+    ) -> QueryResponse:
         state = WorkflowState(
             question=question,
             access=access,
@@ -86,7 +159,10 @@ class QueryWorkflow:
         node = "classify"
         for _step in range(MAX_STEPS):
             state.path.append(node)
-            node = nodes[node](state)
+            current = node
+            observation.enter(current)
+            node = nodes[current](state)
+            observation.leave(current, state, node)
             if node == "answer":
                 return self._answered(state)
             if node == "clarification":
@@ -249,7 +325,22 @@ class QueryWorkflow:
                 list(verification.unsupported_claims) if verification is not None else []
             ),
             degraded_dependencies=list(state.degraded_dependencies),
+            model_route=self._programs.synthesizer.revision,
+            prompt_tokens=(
+                estimate_tokens(state.question)
+                + sum(estimate_tokens(item.chunk.text) for item in bundle.items)
+                if bundle is not None and state.answer is not None
+                else 0
+            ),
+            completion_tokens=(
+                estimate_tokens(state.answer.text) if state.answer is not None else 0
+            ),
         )
+
+
+def estimate_tokens(text: str) -> int:
+    """Whitespace-delimited token count: an estimate, comparable across runs, not a bill."""
+    return len(text.split())
 
 
 def _merge(results: list[RetrievalResult], *, limit: int) -> RetrievalResult:

@@ -8,6 +8,15 @@ from fastapi.responses import FileResponse
 
 from rag_platform.bootstrap import Platform, build_platform
 from rag_platform.catalog import IndexActivationError
+from rag_platform.feedback import (
+    Feedback,
+    FeedbackLog,
+    FeedbackRequest,
+    FeedbackReview,
+    FeedbackReviewError,
+    FeedbackStatus,
+    UnknownFeedbackError,
+)
 from rag_platform.ingestion import IngestionValidationError
 from rag_platform.models import (
     AccessContext,
@@ -55,7 +64,7 @@ def create_app(platform: Platform | None = None) -> FastAPI:
 
     application = FastAPI(
         title="Self-Optimizing RAG Platform",
-        version="0.8.0",
+        version="0.9.0",
         lifespan=lifespan,
     )
 
@@ -109,7 +118,41 @@ def create_app(platform: Platform | None = None) -> FastAPI:
         except IndexActivationError as error:
             raise HTTPException(status_code=409, detail=str(error)) from error
 
+    @application.post("/v1/feedback", response_model=Feedback, status_code=201)
+    def submit_feedback(
+        payload: FeedbackRequest,
+        request: Request,
+        access: Annotated[AccessContext, Depends(access_context)],
+    ) -> Feedback:
+        return _feedback(request).submit(access.tenant_id, access.labels, payload)
+
+    @application.get("/v1/feedback", response_model=list[Feedback])
+    def list_feedback(
+        request: Request,
+        access: Annotated[AccessContext, Depends(require_steward)],
+        status: FeedbackStatus | None = None,
+    ) -> list[Feedback]:
+        return _feedback(request).items(access.tenant_id, status)
+
+    @application.post("/v1/feedback/{feedback_id}/review", response_model=Feedback)
+    def review_feedback(
+        feedback_id: str,
+        payload: FeedbackReview,
+        request: Request,
+        access: Annotated[AccessContext, Depends(require_steward)],
+    ) -> Feedback:
+        try:
+            return _feedback(request).review(access.tenant_id, feedback_id, payload)
+        except UnknownFeedbackError as error:
+            raise HTTPException(status_code=404, detail="feedback not found") from error
+        except FeedbackReviewError as error:
+            raise HTTPException(status_code=409, detail=str(error)) from error
+
     return application
+
+
+def _feedback(request: Request) -> FeedbackLog:
+    return _platform(request).feedback
 
 
 def _platform(request: Request) -> Platform:

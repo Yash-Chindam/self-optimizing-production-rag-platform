@@ -64,6 +64,13 @@ class AnswerTrace(BaseModel):
     unsupported_claims: list[str] = []
     degraded_dependencies: list[str] = []
     served_from_cache: bool = False
+    trace_id: str | None = None
+    """The exported trace for this answer; None when tracing is off or the query was not sampled."""
+    latency_ms: float = 0.0
+    model_route: str | None = None
+    """Revision of the program that generated the answer."""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class QueryResponse(BaseModel):
