@@ -7,13 +7,20 @@ Ingestion is idempotent: re-ingesting identical content reuses the existing sour
 does not create a second index version.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from hashlib import blake2s, sha256
 
 from rag_platform.adapters.mirror import IndexMirror
 from rag_platform.adapters.originals import OriginalStore
 from rag_platform.catalog import IndexCatalog
-from rag_platform.chunking import build_pieces
+from rag_platform.chunking import ChunkPiece, build_pieces
+from rag_platform.events import (
+    EventPublisher,
+    ingestion_completed,
+    publish_safely,
+    source_changed,
+)
 from rag_platform.models import (
     ChunkingConfig,
     DocumentChunk,
@@ -32,6 +39,10 @@ LANGUAGE_MARKERS: dict[str, frozenset[str]] = {
     "es": frozenset({"el", "la", "los", "debe", "para", "con"}),
     "fr": frozenset({"le", "les", "des", "doit", "pour", "avec"}),
 }
+
+
+PieceBuilder = Callable[[str, str, ChunkingConfig], list[ChunkPiece]]
+"""Turns processed text into chunk pieces. The LlamaIndex adapter provides an alternative."""
 
 
 class IngestionValidationError(RuntimeError):
@@ -80,6 +91,9 @@ class IngestionPipeline:
     """Real stores to write a validated index version into, before it is activated."""
     originals: OriginalStore | None = None
     """Where the immutable original is kept, addressed by its content hash."""
+    piece_builder: PieceBuilder = build_pieces
+    events: EventPublisher | None = None
+    """Notified of new source versions and activated index versions. Always best effort."""
 
     def ingest(self, registration: SourceRegistration, content: str) -> IngestionResult:
         digest = content_hash(content)
@@ -114,6 +128,7 @@ class IngestionPipeline:
         checks = checks + self._mirror(index_version, chunks)
         activated = self.catalog.activate(index_version.index_version_id)
         checks = checks + self._apply_original_retention(registration, original_key)
+        checks = checks + self._announce(source_version, activated, len(chunks))
 
         return IngestionResult(
             source_version=source_version,
@@ -174,6 +189,32 @@ class IngestionPipeline:
             )
         )
 
+    def _announce(
+        self, source_version: SourceVersion, activated: IndexVersion, chunk_count: int
+    ) -> tuple[str, ...]:
+        """Publish what happened. A broker failure is recorded, never raised."""
+        notes = (
+            publish_safely(
+                self.events,
+                source_changed(
+                    source_version.tenant_id,
+                    source_version.source_id,
+                    source_version.source_version_id,
+                    source_version.content_hash,
+                ),
+            ),
+            publish_safely(
+                self.events,
+                ingestion_completed(
+                    activated.tenant_id,
+                    activated.index_version_id,
+                    source_version.source_version_id,
+                    chunk_count,
+                ),
+            ),
+        )
+        return tuple(note for note in notes if note is not None)
+
     def _carried_chunks(self, registration: SourceRegistration) -> tuple[DocumentChunk, ...]:
         """Keep chunks from other sources so a new index version stays complete."""
         return tuple(
@@ -186,7 +227,7 @@ class IngestionPipeline:
     def _build_chunks(
         self, source_version: SourceVersion, text: str
     ) -> tuple[list[DocumentChunk], int]:
-        pieces = build_pieces(text, source_version.document_type, self.chunking)
+        pieces = self.piece_builder(text, source_version.document_type, self.chunking)
         identifiers = {
             piece.ordinal: f"{source_version.source_version_id}-{piece.ordinal:04d}"
             for piece in pieces

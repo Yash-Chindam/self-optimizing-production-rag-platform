@@ -30,6 +30,25 @@ from rag_platform.retrieval import HybridRetriever, RetrievalResult, RetrievedCh
 
 INSUFFICIENT_EVIDENCE = "I could not find authorized evidence for that question."
 MAX_STEPS = 24
+ENTRY = "classify"
+TERMINALS = ("answer", "clarification", "fallback")
+TRANSITIONS: dict[str, tuple[str, ...]] = {
+    "classify": ("clarify", "rewrite"),
+    "clarify": ("clarification",),
+    "rewrite": ("decompose",),
+    "decompose": ("retrieve",),
+    "retrieve": ("build_context",),
+    "build_context": ("generate", "fallback"),
+    "generate": ("verify",),
+    "verify": ("answer", "repair", "fallback"),
+    "repair": ("generate",),
+}
+"""Every edge of the state machine. An executor may only follow these."""
+
+
+class WorkflowTransitionError(RuntimeError):
+    """A state tried to route somewhere the state machine does not allow."""
+
 
 
 @dataclass(slots=True)
@@ -140,12 +159,26 @@ class QueryWorkflow:
     def _execute(
         self, question: str, access: AccessContext, observation: QueryObservation
     ) -> QueryResponse:
-        state = WorkflowState(
+        state = self.new_state(question, access)
+        node = ENTRY
+        for _step in range(MAX_STEPS):
+            node = self.step(node, state, observation)
+            if node in TERMINALS:
+                return self.respond(node, state)
+        return self.respond("fallback", state)
+
+    # Executor surface --------------------------------------------------------
+    # Everything an executor needs to drive the states. The in-process loop above and the
+    # LangGraph adapter both go through these, so neither can change what a state does.
+    def new_state(self, question: str, access: AccessContext) -> WorkflowState:
+        return WorkflowState(
             question=question,
             access=access,
             sentence_limit=self._config.answer_sentence_limit,
         )
-        nodes: dict[str, Callable[[WorkflowState], str]] = {
+
+    def nodes(self) -> dict[str, Callable[[WorkflowState], str]]:
+        return {
             "classify": self._classify,
             "clarify": self._clarify,
             "rewrite": self._rewrite,
@@ -156,19 +189,22 @@ class QueryWorkflow:
             "verify": self._verify,
             "repair": self._repair,
         }
-        node = "classify"
-        for _step in range(MAX_STEPS):
-            state.path.append(node)
-            current = node
-            observation.enter(current)
-            node = nodes[current](state)
-            observation.leave(current, state, node)
-            if node == "answer":
-                return self._answered(state)
-            if node == "clarification":
-                return self._clarification(state)
-            if node == "fallback":
-                return self._fallback(state)
+
+    def step(self, node: str, state: WorkflowState, observation: QueryObservation) -> str:
+        """Run one state, record it on the path, and return where the query goes next."""
+        state.path.append(node)
+        observation.enter(node)
+        following = self.nodes()[node](state)
+        if following not in TRANSITIONS[node]:
+            raise WorkflowTransitionError(f"{node} cannot route to {following}")
+        observation.leave(node, state, following)
+        return following
+
+    def respond(self, outcome: str, state: WorkflowState) -> QueryResponse:
+        if outcome == "answer":
+            return self._answered(state)
+        if outcome == "clarification":
+            return self._clarification(state)
         return self._fallback(state)
 
     # States ----------------------------------------------------------------
