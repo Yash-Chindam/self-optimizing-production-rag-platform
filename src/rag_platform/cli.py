@@ -7,11 +7,12 @@ set, and `evaluate` is the release gate CI and the DVC pipeline both call.
 
 import argparse
 import json
+import os
 import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from rag_platform.bootstrap import Platform, build_platform
+from rag_platform.bootstrap import Platform
 from rag_platform.evaluation import (
     EvaluationReport,
     Evaluator,
@@ -22,6 +23,8 @@ from rag_platform.evaluation import (
 )
 from rag_platform.models import CandidateRun
 from rag_platform.optimization import CandidateSpace, OptimizationRun
+from rag_platform.runtime import build_runtime
+from rag_platform.settings import Settings
 
 DEFAULT_DATASET = Path("data/evaluation/cases.jsonl")
 
@@ -82,7 +85,14 @@ def _serve(arguments: argparse.Namespace) -> int:
 
 
 def _evaluate(arguments: argparse.Namespace) -> int:
-    platform = build_platform()
+    runtime = build_runtime(Settings.from_env(os.environ))
+    try:
+        return _evaluate_on(runtime.platform, arguments)
+    finally:
+        runtime.close()
+
+
+def _evaluate_on(platform: Platform, arguments: argparse.Namespace) -> int:
     report = evaluate_dataset(platform, arguments.dataset)
     write_report(report, metrics=arguments.metrics, results=arguments.results)
     if arguments.mlflow_tracking_uri:
@@ -107,7 +117,14 @@ def _evaluate(arguments: argparse.Namespace) -> int:
 
 
 def _optimize(arguments: argparse.Namespace) -> int:
-    platform = build_platform()
+    runtime = build_runtime(Settings.from_env(os.environ))
+    try:
+        return _optimize_on(runtime.platform, arguments)
+    finally:
+        runtime.close()
+
+
+def _optimize_on(platform: Platform, arguments: argparse.Namespace) -> int:
     runs = optimize_dataset(platform, arguments.dataset, max_candidates=arguments.max_candidates)
     if arguments.mlflow_tracking_uri:
         from rag_platform.adapters.mlflow_tracking import MlflowRunLogger, client_for

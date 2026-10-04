@@ -86,7 +86,7 @@ def _new_id() -> str:
     return f"fb-{uuid4().hex[:12]}"
 
 
-@dataclass(slots=True)
+@dataclass
 class FeedbackLog:
     """Feedback per tenant. A tenant can never read or review another tenant's feedback."""
 
@@ -106,7 +106,7 @@ class FeedbackLog:
             comment=self.redactor(request.comment),
             trace_id=request.trace_id,
         )
-        self._items[feedback.feedback_id] = feedback
+        self._save(feedback)
         return feedback
 
     def review(self, tenant_id: str, feedback_id: str, review: FeedbackReview) -> Feedback:
@@ -120,11 +120,11 @@ class FeedbackLog:
                 "failure_category": review.failure_category,
             }
         )
-        self._items[feedback_id] = reviewed
+        self._save(reviewed)
         return reviewed
 
     def get(self, tenant_id: str, feedback_id: str) -> Feedback:
-        found = self._items.get(feedback_id)
+        found = self._find(feedback_id)
         # A feedback id from another tenant is reported exactly like one that does not exist.
         if found is None or found.tenant_id != tenant_id:
             raise UnknownFeedbackError(feedback_id)
@@ -132,7 +132,15 @@ class FeedbackLog:
 
     def items(self, tenant_id: str, status: FeedbackStatus | None = None) -> list[Feedback]:
         return [
-            item
-            for item in self._items.values()
-            if item.tenant_id == tenant_id and (status is None or item.status == status)
+            item for item in self._for_tenant(tenant_id) if status is None or item.status == status
         ]
+
+    # Storage. A durable log overrides these three and nothing else.
+    def _save(self, feedback: Feedback) -> None:
+        self._items[feedback.feedback_id] = feedback
+
+    def _find(self, feedback_id: str) -> Feedback | None:
+        return self._items.get(feedback_id)
+
+    def _for_tenant(self, tenant_id: str) -> list[Feedback]:
+        return [item for item in self._items.values() if item.tenant_id == tenant_id]

@@ -15,6 +15,7 @@ the framework gate raises `GateFailedError`, and an optimization only promotes a
 survived its canary.
 """
 
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -29,7 +30,7 @@ from rag_platform.adapters.eval_frameworks import (
     framework_gate,
     ragas_scores,
 )
-from rag_platform.bootstrap import Platform, build_platform
+from rag_platform.bootstrap import Platform
 from rag_platform.evaluation import (
     EvaluationReport,
     Evaluator,
@@ -41,8 +42,16 @@ from rag_platform.events import EventPublisher, evaluation_completed, publish_sa
 from rag_platform.ingestion import IngestionValidationError
 from rag_platform.models import CandidateRun, IngestionReport, SourceRegistration
 from rag_platform.optimization import CandidateSpace, OptimizationRun
+from rag_platform.runtime import build_platform_from_settings
+from rag_platform.settings import Settings
 
-PLATFORM_FACTORY: Callable[[], Platform] = build_platform
+
+def platform_from_environment() -> Platform:
+    """The platform a worker acts on: assembled from its own environment."""
+    return build_platform_from_settings(Settings.from_env(os.environ))
+
+
+PLATFORM_FACTORY: Callable[[], Platform] = platform_from_environment
 EVENT_PUBLISHER: EventPublisher | None = None
 
 

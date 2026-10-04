@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from rag_platform.catalog import IndexCatalog
 from rag_platform.context import ContextBuilder
+from rag_platform.evaluation import Answerer
 from rag_platform.feedback import FeedbackLog
 from rag_platform.graph import CatalogGraphRetriever
 from rag_platform.ingestion import IngestionPipeline
@@ -90,7 +91,8 @@ class Platform:
     config: PipelineConfig
     catalog: IndexCatalog
     ingestion: IngestionPipeline
-    query_service: QueryService
+    query_service: Answerer
+    """A `QueryService`, or one wrapped by the answer cache."""
     feedback: FeedbackLog
     optimization: OptimizationContext
     """What the offline evaluation and optimization commands assemble candidate services from."""
@@ -133,5 +135,5 @@ def build_platform(
     )
 
 
-def build_query_service() -> QueryService:
+def build_query_service() -> Answerer:
     return build_platform().query_service
