@@ -1,0 +1,57 @@
+{{- $qdrant := include "rag.endpoint" (dict "root" . "value" .Values.endpoints.qdrantUrl "name" "qdrant" "format" "http://%s:6333") -}}
+{{- $opensearch := include "rag.endpoint" (dict "root" . "value" .Values.endpoints.opensearchUrl "name" "opensearch" "format" "http://%s:9200") -}}
+{{- $neo4j := include "rag.endpoint" (dict "root" . "value" .Values.endpoints.neo4jUrl "name" "neo4j" "format" "bolt://%s:7687") -}}
+{{- $minio := include "rag.endpoint" (dict "root" . "value" .Values.endpoints.minioEndpoint "name" "minio" "format" "%s:9000") -}}
+{{- $kafka := include "rag.endpoint" (dict "root" . "value" .Values.endpoints.kafkaBootstrapServers "name" "kafka" "format" "%s:9092") -}}
+{{- $mlflow := include "rag.endpoint" (dict "root" . "value" .Values.endpoints.mlflowTrackingUri "name" "mlflow" "format" "http://%s:5000") -}}
+{{- $prefect := include "rag.endpoint" (dict "root" . "value" .Values.endpoints.prefectApiUrl "name" "prefect" "format" "http://%s:4200/api") -}}
+{{- $otlp := include "rag.otlpEndpoint" . -}}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "rag.fullname" . }}-config
+  labels:
+    {{- include "rag.labels" . | nindent 4 }}
+data:
+  RAG_SERVICE_NAME: {{ include "rag.fullname" . | quote }}
+  RAG_WORKFLOW_EXECUTOR: {{ .Values.config.workflowExecutor | quote }}
+  RAG_CHUNKER: {{ .Values.config.chunker | quote }}
+  RAG_PII_RECOGNIZER: {{ .Values.config.piiRecognizer | quote }}
+  RAG_EMBEDDER: {{ .Values.config.embedder | quote }}
+  RAG_CACHE_TTL_SECONDS: {{ .Values.config.cacheTtlSeconds | quote }}
+  RAG_CATALOG_SYNC_SECONDS: {{ .Values.config.catalogSyncSeconds | quote }}
+  RAG_TRACE_SAMPLE_RATIO: {{ .Values.config.trace.sampleRatio | quote }}
+  RAG_TRACE_CAPTURE_TEXT: {{ .Values.config.trace.captureText | quote }}
+  {{- with .Values.config.llmModel }}
+  RAG_LLM_MODEL: {{ . | quote }}
+  {{- end }}
+  {{- with .Values.config.seedDemoSources }}
+  RAG_SEED_DEMO_SOURCES: {{ . | quote }}
+  {{- end }}
+  {{- with $qdrant }}
+  RAG_QDRANT_URL: {{ . | quote }}
+  {{- end }}
+  {{- with $opensearch }}
+  RAG_OPENSEARCH_URL: {{ . | quote }}
+  {{- end }}
+  {{- with $neo4j }}
+  RAG_NEO4J_URL: {{ . | quote }}
+  RAG_NEO4J_USER: {{ $.Values.endpoints.neo4jUser | quote }}
+  {{- end }}
+  {{- with $minio }}
+  RAG_MINIO_ENDPOINT: {{ . | quote }}
+  RAG_MINIO_SECURE: {{ $.Values.endpoints.minioSecure | quote }}
+  RAG_MINIO_BUCKET: {{ $.Values.endpoints.minioBucket | quote }}
+  {{- end }}
+  {{- with $kafka }}
+  RAG_KAFKA_BOOTSTRAP_SERVERS: {{ . | quote }}
+  {{- end }}
+  {{- with $mlflow }}
+  RAG_MLFLOW_TRACKING_URI: {{ . | quote }}
+  {{- end }}
+  {{- with $prefect }}
+  PREFECT_API_URL: {{ . | quote }}
+  {{- end }}
+  {{- with $otlp }}
+  RAG_OTLP_ENDPOINT: {{ . | quote }}
+  {{- end }}

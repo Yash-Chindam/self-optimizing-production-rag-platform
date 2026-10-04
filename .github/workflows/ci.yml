@@ -109,6 +109,7 @@ jobs:
           set -a && . deploy/local.env && set +a
           pytest tests/integration/test_stores.py tests/integration/test_services.py             tests/integration/test_observability.py tests/integration/test_kafka.py \
             tests/integration/test_orchestration.py \
+            tests/integration/test_full_stack.py \
             -v --no-cov
       - name: DVC round trip through the object store
         # Evaluation outputs are pushed to MinIO, dropped locally, and pulled back by hash.
@@ -136,5 +137,53 @@ jobs:
           context: .
           push: false
           tags: rag-platform:ci
+      - name: Build the image a store-backed deployment runs
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          push: false
+          tags: rag-platform:ci-stores
+          build-args: |
+            RAG_EXTRAS=stores,observability,events,workflow
       - name: Validate the local store stack
         run: docker compose config --quiet
+
+  kubernetes:
+    name: Helm chart on Kubernetes
+    runs-on: ubuntu-latest
+    env:
+      CHART: deploy/helm/rag-platform
+    steps:
+      - uses: actions/checkout@v7
+      - name: Lint the chart with default and development values
+        run: |
+          helm lint "$CHART" --strict
+          helm lint "$CHART" --strict -f "$CHART/values-dev.yaml"
+      - name: Refuse in-cluster stores without an explicit development password
+        run: |
+          if helm template rag "$CHART" --set backingServices.enabled=true > /dev/null 2>&1; then
+            echo "backingServices rendered without devPassword" >&2
+            exit 1
+          fi
+      - name: Create a cluster and load the application image
+        run: |
+          kind create cluster --wait 120s
+          docker build -t rag-platform:ci .
+          kind load docker-image rag-platform:ci
+      - name: Validate every manifest of the full topology against the API server
+        run: |
+          helm template rag "$CHART" -f "$CHART/values-dev.yaml" --set image.tag=ci \
+            | kubectl apply --dry-run=server -f -
+      - name: Install the chart and wait for the rollout
+        run: |
+          helm install rag "$CHART" --set image.tag=ci --wait --timeout 300s
+          kubectl get pods,svc,hpa,pdb,networkpolicy
+      - name: Run the chart's own test against the running API
+        run: |
+          helm test rag --logs
+      - name: Cluster state
+        if: failure()
+        run: |
+          kubectl get pods -o wide
+          kubectl describe pods | tail -80
+          kubectl logs -l app.kubernetes.io/component=api --tail 80 || true

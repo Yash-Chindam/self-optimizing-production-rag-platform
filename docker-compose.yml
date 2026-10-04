@@ -9,7 +9,7 @@
 #     pytest tests/integration/test_stores.py
 #
 # Single-node, no-auth, ephemeral settings here are for local development only; the Helm chart
-# under deploy/ is what carries production configuration.
+# under deploy/helm/rag-platform is what carries production configuration.
 
 name: rag-platform
 

@@ -1,0 +1,271 @@
+# Default values: the API alone, running fully in-process. Every external dependency is opt-in
+# through `endpoints` (services you already run) or `backingServices` (in-cluster, development).
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: rag-platform
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# -- API pods. These also execute the query workflow (the LangGraph workers of section 18).
+replicaCount: 2
+
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  runAsGroup: 10001
+  fsGroup: 10001
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+service:
+  type: ClusterIP
+  port: 80
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: rag.example.internal
+  tls:
+    enabled: false
+    secretName: ""
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+
+# -- Restrict ingress to the API port and, when enabled, limit who may reach it.
+networkPolicy:
+  enabled: true
+  # Namespace/pod selectors allowed to call the API. Empty allows any pod in the namespace.
+  ingressFrom: []
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+# -- Non-secret application settings (rendered into a ConfigMap as RAG_* variables).
+config:
+  workflowExecutor: inprocess   # inprocess | langgraph
+  chunker: builtin              # builtin | llamaindex
+  piiRecognizer: regex          # regex | presidio
+  embedder: hashing             # hashing | sentence-transformers
+  llmModel: ""                  # a DSPy/LiteLLM model name; empty keeps the deterministic programs
+  seedDemoSources: ""           # "", "true" or "false"; empty seeds only without a durable catalog
+  cacheTtlSeconds: 300
+  catalogSyncSeconds: 5
+  trace:
+    sampleRatio: "0.1"
+    captureText: false
+
+# -- Endpoints of services that already exist. Empty leaves that boundary in-process (or, with
+# backingServices.enabled, points it at the in-cluster instance).
+endpoints:
+  qdrantUrl: ""
+  opensearchUrl: ""
+  neo4jUrl: ""
+  neo4jUser: neo4j
+  minioEndpoint: ""
+  minioSecure: false
+  minioBucket: rag-originals
+  kafkaBootstrapServers: ""
+  mlflowTrackingUri: ""
+  prefectApiUrl: ""
+  # OTLP endpoint. Empty uses the bundled collector when otelCollector.enabled.
+  otlpEndpoint: ""
+
+# -- Secret settings. Reference a Secret you manage (recommended), or let the chart create one.
+# Keys read: RAG_POSTGRES_DSN, RAG_REDIS_URL, RAG_NEO4J_PASSWORD, RAG_MINIO_ACCESS_KEY,
+# RAG_MINIO_SECRET_KEY, and any model-provider key your RAG_LLM_MODEL needs.
+secrets:
+  existingSecret: ""
+  values: {}
+
+extraEnv: []
+
+# -- OpenTelemetry Collector: receives OTLP from the API and forwards traces.
+otelCollector:
+  enabled: false
+  image: otel/opentelemetry-collector-contrib:0.161.0
+  # Where traces go, e.g. http://phoenix:6006. Empty uses the in-cluster Phoenix when
+  # backingServices is enabled.
+  exporterEndpoint: ""
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
+
+# -- Scheduled release gate: runs the versioned evaluation set and fails the Job if it fails.
+evaluation:
+  enabled: false
+  schedule: "0 2 * * *"
+  dataset: data/evaluation/cases.jsonl
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+# -- Prefect worker for the ingestion, evaluation and optimization flows. Needs an image built
+# with the orchestration, evaluation and governance extras.
+prefectWorker:
+  enabled: false
+  replicas: 1
+  workPool: rag
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+# -- In-cluster instances of the stores and services in specification section 18, for
+# development and review environments. Single replica, no backup, a shared development password:
+# production points `endpoints` and `secrets.existingSecret` at managed services instead.
+backingServices:
+  enabled: false
+  # Required when enabled. Used for PostgreSQL, Neo4j and MinIO.
+  devPassword: ""
+  storageClassName: ""
+  services:
+    postgres:
+      enabled: true
+      image: postgres:17-alpine
+      port: 5432
+      storage: 2Gi
+      mountPath: /var/lib/postgresql/data
+      env:
+        POSTGRES_USER: rag
+        POSTGRES_DB: rag
+        POSTGRES_PASSWORD: "{{ .Values.backingServices.devPassword }}"
+        PGDATA: /var/lib/postgresql/data/pgdata
+    qdrant:
+      enabled: true
+      image: qdrant/qdrant:v1.12.4
+      port: 6333
+      storage: 5Gi
+      mountPath: /qdrant/storage
+    opensearch:
+      enabled: true
+      image: opensearchproject/opensearch:2.18.0
+      port: 9200
+      storage: 5Gi
+      mountPath: /usr/share/opensearch/data
+      fsGroup: 1000
+      env:
+        discovery.type: single-node
+        OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+        DISABLE_SECURITY_PLUGIN: "true"
+        DISABLE_INSTALL_DEMO_CONFIG: "true"
+    neo4j:
+      enabled: true
+      image: neo4j:5.26-community
+      port: 7687
+      storage: 2Gi
+      mountPath: /data
+      env:
+        NEO4J_AUTH: "neo4j/{{ .Values.backingServices.devPassword }}"
+    minio:
+      enabled: true
+      image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+      port: 9000
+      storage: 5Gi
+      mountPath: /data
+      command: ["minio"]
+      args: ["server", "/data"]
+      env:
+        MINIO_ROOT_USER: rag
+        MINIO_ROOT_PASSWORD: "{{ .Values.backingServices.devPassword }}"
+    redis:
+      enabled: true
+      image: redis:7.4-alpine
+      port: 6379
+      storage: 1Gi
+      mountPath: /data
+    kafka:
+      enabled: true
+      image: apache/kafka:3.9.1
+      port: 9092
+      storage: 2Gi
+      mountPath: /var/lib/kafka/data
+      env:
+        KAFKA_NODE_ID: "1"
+        KAFKA_PROCESS_ROLES: broker,controller
+        KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+        KAFKA_ADVERTISED_LISTENERS: 'PLAINTEXT://{{ include "rag.fullname" . }}-kafka:9092'
+        KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+        KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+        KAFKA_CONTROLLER_QUORUM_VOTERS: 1@localhost:9093
+        KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: "1"
+        KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: "1"
+        KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: "1"
+        KAFKA_LOG_DIRS: /var/lib/kafka/data
+    phoenix:
+      enabled: true
+      image: arizephoenix/phoenix:version-20.19.0
+      port: 6006
+      storage: 2Gi
+      mountPath: /mnt/data
+      env:
+        PHOENIX_WORKING_DIR: /mnt/data
+    mlflow:
+      enabled: true
+      image: ghcr.io/mlflow/mlflow:v3.16.1
+      port: 5000
+      storage: 2Gi
+      mountPath: /mlflow
+      command: ["mlflow"]
+      args:
+        - server
+        - --host=0.0.0.0
+        - --port=5000
+        - --backend-store-uri=sqlite:////mlflow/mlflow.db
+        - --artifacts-destination=/mlflow/artifacts
+        - --serve-artifacts
+        - --allowed-hosts=*
+    prefect:
+      enabled: true
+      image: prefecthq/prefect:3.8.7-python3.13
+      port: 4200
+      storage: 1Gi
+      mountPath: /root/.prefect
+      command: ["prefect"]
+      args: ["server", "start", "--host", "0.0.0.0"]
+      env:
+        PREFECT_SERVER_ANALYTICS_ENABLED: "false"

@@ -1,0 +1,43 @@
+# `helm test`: the API is ready and answers an authorized question, or abstains, over HTTP.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: {{ include "rag.fullname" . }}-test-api
+  labels:
+    {{- include "rag.labels" . | nindent 4 }}
+    app.kubernetes.io/component: test
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    {{- toYaml .Values.podSecurityContext | nindent 4 }}
+  containers:
+    - name: test
+      image: {{ include "rag.image" . | quote }}
+      imagePullPolicy: {{ .Values.image.pullPolicy }}
+      securityContext:
+        {{- toYaml .Values.securityContext | nindent 8 }}
+      env:
+        - name: RAG_API
+          value: http://{{ include "rag.fullname" . }}:{{ .Values.service.port }}
+      command:
+        - python
+        - -c
+        - |
+          import json, os, urllib.request
+
+          base = os.environ["RAG_API"]
+          ready = json.load(urllib.request.urlopen(base + "/readyz", timeout=10))
+          assert ready["status"] == "ready", ready
+          request = urllib.request.Request(
+              base + "/v1/query",
+              data=json.dumps({"question": "How do I request annual leave?"}).encode(),
+              headers={"Content-Type": "application/json", "X-Tenant-ID": "tenant-acme"},
+          )
+          answer = json.load(urllib.request.urlopen(request, timeout=30))
+          assert answer["status"] in {"answered", "insufficient_evidence"}, answer
+          assert answer["trace"]["policy"], answer
+          print("ready:", ready["dependencies"], "| query:", answer["status"])
