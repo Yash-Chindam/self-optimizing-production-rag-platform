@@ -1,0 +1,6 @@
+[core]
+    analytics = false
+    remote = minio
+['remote "minio"']
+    url = s3://rag-dvc
+    endpointurl = http://127.0.0.1:9000

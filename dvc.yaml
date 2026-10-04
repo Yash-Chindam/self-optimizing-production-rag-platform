@@ -1,0 +1,17 @@
+# The evaluation set is the dependency, the timing-free report is the output, and dvc.lock pins
+# the content hash of both. A change to the data, or a change in what the platform answers for
+# the same data, shows up as a dvc.lock diff that has to be committed and reviewed.
+stages:
+  evaluate:
+    cmd: >-
+      python -m rag_platform evaluate
+      --dataset data/evaluation/cases.jsonl
+      --metrics reports/evaluation/metrics.json
+      --results reports/evaluation/results.jsonl
+    deps:
+      - data/evaluation/cases.jsonl
+    outs:
+      - reports/evaluation/results.jsonl
+    metrics:
+      - reports/evaluation/metrics.json:
+          cache: false

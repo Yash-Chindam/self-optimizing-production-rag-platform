@@ -1,0 +1,11 @@
+{
+  "authorization_violations": 0,
+  "case_count": 10,
+  "config_version": "pipeline-v1",
+  "dataset_revision": "59deebbdcfb29ae7375260b7838a1479",
+  "grounded_rate": 1.0,
+  "mean_recall_at_k": 1.0,
+  "mean_reciprocal_rank": 1.0,
+  "pass_rate": 1.0,
+  "passed_count": 10
+}
