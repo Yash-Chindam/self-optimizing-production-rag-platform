@@ -69,7 +69,7 @@ def test_ingestion_activates_a_validated_index_version(pipeline: IngestionPipeli
     assert result.index_version.chunk_count == result.report.chunk_count
     assert result.source_version.source_version_id in result.index_version.source_version_ids
     assert "retrieval_smoke_passed" in result.report.validation_checks
-    assert result.index_version.physical_dense_index.startswith("qdrant:")
+    assert result.index_version.physical_dense_index.startswith("qdrant-tenant-")
 
 
 def test_source_version_records_lineage_and_detected_properties(
@@ -246,3 +246,15 @@ def test_content_restored_by_rollback_can_be_reingested(
     reingested = pipeline.ingest(registration(), UPDATED_HANDBOOK)
     assert reingested.report.reused_existing_source_version is False
     assert reingested.index_version.index_version_id != first.index_version.index_version_id
+
+
+def test_physical_index_names_are_valid_in_every_store() -> None:
+    """Qdrant and OpenSearch reject ':' and OpenSearch rejects upper case."""
+    import re
+
+    from rag_platform.ingestion import physical_index_name
+
+    for store in ("qdrant", "opensearch", "neo4j"):
+        name = physical_index_name(store, "Tenant:ACME/EU west", "0a1b2c3d4e5f")
+        assert re.fullmatch(r"[a-z0-9_-]+", name)
+        assert name == f"{store}-tenant-acme-eu-west-0a1b2c3d4e5f"
