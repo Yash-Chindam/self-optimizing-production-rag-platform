@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "self-optimizing-rag-platform"
-version = "0.10.0"
+version = "0.11.0"
 description = "Evaluation-driven, privacy-aware RAG platform starter"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -56,6 +56,17 @@ ingestion = [
 events = [
   "confluent-kafka>=2.6,<3.0",
 ]
+# Prefect flows for ingestion, evaluation and optimization.
+orchestration = [
+  "prefect>=3.4,<4.0",
+]
+# RAGAS and DeepEval, used with reference-based metrics only. RAGAS 0.4 still imports a module
+# that langchain-community 0.4 removed, hence the upper bound.
+evaluation = [
+  "ragas>=0.4,<0.5",
+  "langchain-community>=0.3,<0.4",
+  "deepeval>=3.0,<5.0",
+]
 # OpenTelemetry tracing in OpenInference conventions, exported over OTLP to a collector.
 observability = [
   "opentelemetry-sdk>=1.30,<2.0",
@@ -83,7 +94,8 @@ where = ["src"]
 rag_platform = ["static/*.html"]
 
 [tool.pytest.ini_options]
-addopts = "--strict-config --strict-markers -q"
+# DeepEval ships a pytest plugin that reports every skip; it is not used here.
+addopts = "--strict-config --strict-markers -q -p no:deepeval"
 testpaths = ["tests"]
 markers = [
   "integration: tests exercising the HTTP application boundary",
@@ -150,8 +162,20 @@ module = [
   "llama_index.*",
   "confluent_kafka",
   "confluent_kafka.*",
+  "deepeval",
+  "deepeval.*",
+  "ragas",
+  "ragas.*",
+  "prefect",
+  "prefect.*",
 ]
 follow_imports = "skip"
 follow_imports_for_stubs = true
 ignore_missing_imports = true
 
+
+# Prefect's task and flow decorators are untyped once prefect itself is skipped above; the
+# functions they wrap are still fully annotated and checked.
+[[tool.mypy.overrides]]
+module = ["rag_platform.adapters.prefect_flows"]
+disallow_untyped_decorators = false

@@ -134,6 +134,17 @@ services:
       timeout: 10s
       retries: 30
 
+  prefect:
+    # Orchestration API and UI. Flows run in the caller's process (or a worker) and report here.
+    image: prefecthq/prefect:3.8.7-python3.13
+    command: ["prefect", "server", "start", "--host", "0.0.0.0"]
+    environment:
+      - PREFECT_SERVER_ANALYTICS_ENABLED=false
+    ports:
+      - "4200:4200"
+    volumes:
+      - prefect-data:/root/.prefect
+
   phoenix:
     # Trace store and UI. No container health check: the image is distroless, so readiness is
     # probed from the host (http://127.0.0.1:6006/healthz).
@@ -181,4 +192,5 @@ volumes:
   postgres-data:
   minio-data:
   phoenix-data:
+  prefect-data:
   mlflow-data:

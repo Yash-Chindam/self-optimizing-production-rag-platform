@@ -308,6 +308,43 @@ Publishing is best effort: a broker failure is recorded in the ingestion report'
 `rag_platform.adapters.kafka_events.KafkaEventPublisher` delivers them to Kafka, one topic per
 event type, keyed by tenant. `docker compose up -d kafka` starts a single-node broker.
 
+## Orchestration and evaluation frameworks
+
+Install with `python -m pip install -e ".[orchestration,evaluation,governance]"`.
+
+**RAGAS and DeepEval.** `rag_platform.adapters.eval_frameworks` scores the same responses the
+deterministic `Evaluator` judged, with two independent implementations. Both are used
+reference-based only: they compare the run against the reviewer-authored expectations in each
+`EvaluationCase`, and no metric calls a model, so no release decision rests on an LLM judge
+(specification section 16).
+
+- `ragas_scores`: RAGAS id-based context recall and precision of the retrieved chunks against
+  the required evidence.
+- `deepeval_regression`: one DeepEval `BaseMetric` per release property (expected outcome,
+  evidence recall, groundedness, authorization, required terms), usable with DeepEval's own
+  `assert_test`.
+- `framework_gate`: both results as release-blocking findings, in `ReleaseGate`'s format.
+
+Test cases carry chunk ids, not chunk text.
+
+**Prefect.** `rag_platform.adapters.prefect_flows` wraps existing steps in flows; the flows hold
+no logic of their own.
+
+| Flow | Does |
+|---|---|
+| `ingestion_flow(documents)` | Ingests sources in order. Transient failures are retried; a validation failure is not. |
+| `evaluation_flow(dataset, mlflow_tracking_uri=None)` | Deterministic evaluation, RAGAS and DeepEval on the same run, optional MLflow record, an `evaluation.completed` event, then the gate. A failed gate fails the flow run with `GateFailedError`. |
+| `optimization_flow(dataset, max_candidates, mlflow_tracking_uri, promote)` | Section 12's loop: evaluate candidates, canary the best Pareto-optimal one, record every disposition, and with `promote=True` move the registry champion only if the canary passed. |
+
+Flows act on the platform returned by `prefect_flows.PLATFORM_FACTORY`.
+`docker compose up -d prefect` starts a Prefect server; point `PREFECT_API_URL` at
+`http://127.0.0.1:4200/api` to record runs there.
+
+```python
+from rag_platform.adapters.prefect_flows import evaluation_flow
+evaluation_flow("data/evaluation/cases.jsonl", mlflow_tracking_uri="http://127.0.0.1:5000")
+```
+
 ## Reliability
 
 Graph expansion, reranking, answer synthesis and claim verification are all optional

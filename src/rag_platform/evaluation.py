@@ -59,6 +59,8 @@ class CaseResult:
     latency_ms: float
     failure_category: FailureCategory | None
     notes: tuple[str, ...]
+    response: QueryResponse | None = None
+    """What the service returned, kept so other evaluation frameworks can score the same run."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,6 +132,7 @@ class Evaluator:
             latency_ms=latency_ms,
             failure_category=category,
             notes=leaked_claims + missing_terms,
+            response=response,
         )
 
 
