@@ -1,0 +1,20 @@
+schema: '2.0'
+stages:
+  evaluate:
+    cmd: python -m rag_platform evaluate --dataset data/evaluation/cases.jsonl 
+      --metrics reports/evaluation/metrics.json --results 
+      reports/evaluation/results.jsonl
+    deps:
+    - path: data/evaluation/cases.jsonl
+      hash: md5
+      md5: 59deebbdcfb29ae7375260b7838a1479
+      size: 4639
+    outs:
+    - path: reports/evaluation/metrics.json
+      hash: md5
+      md5: 48442cd46a321e5c2d059171bb5e3f17
+      size: 273
+    - path: reports/evaluation/results.jsonl
+      hash: md5
+      md5: a1faecebb03ad9627b164e259e19a938
+      size: 1974

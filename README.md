@@ -38,6 +38,9 @@ source versioning, chunking, sensitive-data processing and staged index activati
 | `POST /v1/sources` | Register and ingest a source. Requires the `data-steward` label. |
 | `GET /v1/index-versions/active` | Report the tenant's active index version. |
 | `POST /v1/index-versions/rollback` | Restore the previous index version without reingestion. |
+| `POST /v1/feedback` | Record feedback on an answer, tied to its trace. |
+| `GET /v1/feedback` | List a tenant's feedback. Requires the `data-steward` label. |
+| `POST /v1/feedback/{id}/review` | Accept or dismiss feedback as a named reviewer. |
 | `GET /healthz` | Report the active pipeline configuration version. |
 
 ## Ingestion
@@ -219,6 +222,64 @@ processor = PiiProcessor(recognizer_factory=PresidioRecognizerFactory(analyzer=b
 
 A `PiiPolicy` opts into a kind by naming it (`recognizers=("email", "phone", "person")`); a kind
 that is not named is never analyzed.
+
+## Observability and experiment governance
+
+Install with `python -m pip install -e ".[observability,governance]"`.
+
+**Tracing.** `QueryWorkflow` reports to a `WorkflowObserver`; the core has no telemetry
+dependency. `rag_platform.adapters.tracing.OpenTelemetryObserver` turns each query into one
+trace in OpenInference conventions: a root `rag.query` span and one child span per workflow
+state (`RETRIEVER` for retrieval, `LLM` for generation, `GUARDRAIL` for verification). Spans are
+exported over OTLP to the OpenTelemetry Collector (`deploy/otel-collector.yaml`), which forwards
+them to Phoenix, so the backend is a deployment decision.
+
+Traces leave the trusted boundary, so the adapter is narrow about what it exports
+(specification section 15):
+
+- chunk text is never exported; retrieval spans carry chunk ids, scores and versions;
+- the question and answer are exported only if `TracePolicy.capture_text` allows it, after
+  identifiers are redacted and the text is truncated;
+- a degraded dependency is named, but its error message is not exported;
+- sampling is decided at the root span (`sample_ratio`), so a query is traced whole or not at
+  all, and an unsampled query has no `trace_id`.
+
+`AnswerTrace` carries the `trace_id`, measured `latency_ms`, the `model_route` that generated
+the answer and whitespace-token estimates (`prompt_tokens`, `completion_tokens`).
+
+**Feedback.** `POST /v1/feedback` records a rating against a trace. Free text is redacted on
+the way in. Feedback becomes evaluation material only after a steward reviews it;
+`Feedback.to_case` drafts an `EvaluationCase` from accepted feedback, with the reviewer
+supplying the expected evidence.
+
+**Versioned evaluation set.** `data/evaluation/cases.jsonl` is the reviewed evaluation set for
+the demo corpus. Its revision is the MD5 of the file, which is the hash DVC records in
+`dvc.lock`, so the revision an evaluation or an MLflow run reports is the one DVC tracks.
+
+```bash
+python -m rag_platform evaluate     # run the set, write reports/, exit 1 if the gate fails
+dvc repro                           # the same, as the DVC stage in dvc.yaml
+dvc metrics show
+python -m rag_platform optimize --mlflow-tracking-uri http://127.0.0.1:5000
+```
+
+`evaluate` applies `ReleaseGate`: every case passes, every answer is grounded and no
+unauthorized chunk reaches context. The reports DVC tracks contain no timing, so they are
+byte-identical for identical data and code. CI reruns the stage and fails if the gate fails or
+if `dvc.lock` no longer matches what the platform answers. Evaluation outputs are pushed to an
+S3-compatible DVC remote (MinIO in the local stack; credentials come from the standard AWS
+environment variables).
+
+**MLflow.** `MlflowRunLogger` records every evaluation and every optimization candidate,
+including rejected ones, with its configuration, metrics, dataset revision, program revisions,
+constraint results and promotion disposition. `MlflowConfigRegistry` persists
+`PipelineConfigRegistry` semantics in the MLflow model registry: each configuration is a model
+version, the `champion` alias is the active one, and promotion and rollback move the alias, so a
+restarted process reads the active configuration back.
+
+`docker compose up -d phoenix otel-collector mlflow` starts the three services; the `Store
+adapters` CI job runs `tests/integration/test_observability.py` against them and round-trips the
+DVC outputs through MinIO.
 
 ## Reliability
 

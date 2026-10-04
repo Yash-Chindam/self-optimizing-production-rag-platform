@@ -1,4 +1,5 @@
-# Local stack for the stores in specification sections 5, 6 and 18.
+# Local stack for the stores and the observability and governance services in specification
+# sections 5, 6 and 18.
 #
 # The application does not need any of this to run: `python -m rag_platform` uses the in-process
 # implementations. Bring these up to exercise the real adapters:
@@ -108,9 +109,51 @@ services:
       timeout: 3s
       retries: 30
 
+  phoenix:
+    # Trace store and UI. No container health check: the image is distroless, so readiness is
+    # probed from the host (http://127.0.0.1:6006/healthz).
+    image: arizephoenix/phoenix:version-20.19.0
+    environment:
+      - PHOENIX_WORKING_DIR=/mnt/data
+    ports:
+      - "6006:6006"
+    volumes:
+      - phoenix-data:/mnt/data
+
+  otel-collector:
+    # The application exports OTLP here, never straight to a backend, so where traces go is a
+    # deployment decision rather than an application one.
+    image: otel/opentelemetry-collector-contrib:0.161.0
+    command: ["--config=/etc/otelcol/config.yaml"]
+    volumes:
+      - ./deploy/otel-collector.yaml:/etc/otelcol/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    depends_on:
+      - phoenix
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.16.1
+    command:
+      - mlflow
+      - server
+      - --host=0.0.0.0
+      - --port=5000
+      - --backend-store-uri=sqlite:////mlflow/mlflow.db
+      - --artifacts-destination=/mlflow/artifacts
+      - --serve-artifacts
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow-data:/mlflow
+
 volumes:
   qdrant-data:
   opensearch-data:
   neo4j-data:
   postgres-data:
   minio-data:
+  phoenix-data:
+  mlflow-data:

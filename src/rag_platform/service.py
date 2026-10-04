@@ -2,7 +2,7 @@ from rag_platform.context import ContextBuilder
 from rag_platform.models import AccessContext, PipelineConfig, QueryResponse
 from rag_platform.programs import ProgramSuite
 from rag_platform.retrieval import HybridRetriever
-from rag_platform.workflow import QueryWorkflow
+from rag_platform.workflow import QueryWorkflow, WorkflowObserver
 
 
 class QueryService:
@@ -14,11 +14,16 @@ class QueryService:
         config: PipelineConfig,
         context_builder: ContextBuilder | None = None,
         programs: ProgramSuite | None = None,
+        observer: WorkflowObserver | None = None,
     ) -> None:
         self.config = config
         self.programs = programs or ProgramSuite(revision=config.program_suite_revision)
         self._workflow = QueryWorkflow(
-            retriever, config, context_builder or ContextBuilder(config), self.programs
+            retriever,
+            config,
+            context_builder or ContextBuilder(config),
+            self.programs,
+            observer=observer,
         )
 
     def answer(self, question: str, access: AccessContext) -> QueryResponse:

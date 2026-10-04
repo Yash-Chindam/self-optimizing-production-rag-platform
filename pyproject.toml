@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "self-optimizing-rag-platform"
-version = "0.8.0"
+version = "0.9.0"
 description = "Evaluation-driven, privacy-aware RAG platform starter"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -43,6 +43,19 @@ privacy = [
 ]
 llm = [
   "dspy>=3.0,<4.0",
+]
+# OpenTelemetry tracing in OpenInference conventions, exported over OTLP to a collector.
+observability = [
+  "opentelemetry-sdk>=1.30,<2.0",
+  "opentelemetry-exporter-otlp-proto-http>=1.30,<2.0",
+  "openinference-semantic-conventions>=0.1.12,<1.0",
+]
+# Experiment governance: MLflow tracking and registry, and DVC for the evaluation set.
+governance = [
+  "mlflow-skinny>=3.0,<4.0",
+  "sqlalchemy>=2.0,<3.0",
+  "alembic>=1.13,<2.0",
+  "dvc[s3]>=3.50,<4.0",
 ]
 
 [project.scripts]
@@ -96,6 +109,9 @@ module = [
   "psycopg.*",
   "minio.*",
   "redis.*",
+  "mlflow.*",
+  "opentelemetry.*",
+  "openinference.*",
 ]
 ignore_missing_imports = true
 
@@ -112,6 +128,8 @@ module = [
   "dspy.*",
   "presidio_analyzer",
   "presidio_analyzer.*",
+  "deprecated",
+  "deprecated.*",
 ]
 follow_imports = "skip"
 follow_imports_for_stubs = true

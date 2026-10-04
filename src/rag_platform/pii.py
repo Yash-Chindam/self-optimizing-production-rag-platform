@@ -70,6 +70,23 @@ def _drop_overlaps(spans: list[tuple[str, int, int]]) -> list[tuple[str, int, in
     return kept
 
 
+def redact_identifiers(text: str) -> str:
+    """Replace every identifier the built-in recognizers detect with its kind.
+
+    Unlike pseudonymization this keeps no mapping: it is for text that leaves the trusted
+    boundary (traces, feedback) and must never be rehydrated.
+    """
+    spans = RegexRecognizer(tuple(RECOGNIZER_PATTERNS)).detect(text)
+    parts: list[str] = []
+    cursor = 0
+    for kind, start, end in spans:
+        parts.append(text[cursor:start])
+        parts.append(f"[{kind.upper()}]")
+        cursor = end
+    parts.append(text[cursor:])
+    return "".join(parts)
+
+
 class PseudonymVault:
     """Pseudonym-to-original mappings, stored apart from every retrieval index."""
 

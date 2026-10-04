@@ -171,3 +171,80 @@ def test_an_ambiguous_question_returns_a_clarification(client: TestClient) -> No
     assert payload["status"] == "clarification_needed"
     assert payload["citations"] == []
     assert payload["trace"]["workflow_path"] == ["classify", "clarify"]
+
+
+FEEDBACK = {
+    "question": "How do I request annual leave?",
+    "rating": "unhelpful",
+    "comment": "Write to jane.doe@example.com, the answer missed the notice period.",
+}
+
+
+@pytest.mark.integration
+def test_a_query_reports_its_latency_model_route_and_token_estimates(client: TestClient) -> None:
+    response = client.post(
+        "/v1/query", headers=EMPLOYEE, json={"question": "How do I request annual leave?"}
+    )
+    trace = response.json()["trace"]
+    assert trace["latency_ms"] > 0
+    assert trace["model_route"] == "synthesizer-extractive-v1"
+    assert trace["prompt_tokens"] > 0 and trace["completion_tokens"] > 0
+    assert trace["trace_id"] is None
+
+
+@pytest.mark.integration
+def test_any_caller_can_submit_feedback_and_identifiers_are_redacted(client: TestClient) -> None:
+    response = client.post("/v1/feedback", headers=EMPLOYEE, json=FEEDBACK)
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["tenant_id"] == "tenant-acme"
+    assert body["status"] == "submitted"
+    assert "jane.doe@example.com" not in body["comment"]
+
+
+@pytest.mark.integration
+def test_only_a_steward_can_list_or_review_feedback(client: TestClient) -> None:
+    feedback_id = client.post("/v1/feedback", headers=EMPLOYEE, json=FEEDBACK).json()[
+        "feedback_id"
+    ]
+    review = {"reviewer": "r.osei", "decision": "accepted", "failure_category": "retrieval"}
+
+    assert client.get("/v1/feedback", headers=EMPLOYEE).status_code == 403
+    assert (
+        client.post(f"/v1/feedback/{feedback_id}/review", headers=EMPLOYEE, json=review).status_code
+        == 403
+    )
+
+
+@pytest.mark.integration
+def test_a_steward_reviews_feedback_once(client: TestClient) -> None:
+    feedback_id = client.post("/v1/feedback", headers=EMPLOYEE, json=FEEDBACK).json()[
+        "feedback_id"
+    ]
+    review = {"reviewer": "r.osei", "decision": "accepted", "failure_category": "retrieval"}
+
+    pending = client.get("/v1/feedback", headers=STEWARD, params={"status": "submitted"})
+    assert [item["feedback_id"] for item in pending.json()] == [feedback_id]
+
+    reviewed = client.post(f"/v1/feedback/{feedback_id}/review", headers=STEWARD, json=review)
+    assert reviewed.status_code == 200
+    assert reviewed.json()["status"] == "accepted"
+    assert reviewed.json()["failure_category"] == "retrieval"
+
+    again = client.post(f"/v1/feedback/{feedback_id}/review", headers=STEWARD, json=review)
+    assert again.status_code == 409
+    assert client.get("/v1/feedback", headers=STEWARD, params={"status": "submitted"}).json() == []
+
+
+@pytest.mark.integration
+def test_a_steward_of_another_tenant_cannot_review_feedback(client: TestClient) -> None:
+    feedback_id = client.post("/v1/feedback", headers=EMPLOYEE, json=FEEDBACK).json()[
+        "feedback_id"
+    ]
+    other = {"X-Tenant-ID": "tenant-globex", "X-Access-Labels": "data-steward"}
+    review = {"reviewer": "m.lind", "decision": "dismissed"}
+
+    response = client.post(f"/v1/feedback/{feedback_id}/review", headers=other, json=review)
+    assert response.status_code == 404
+    assert client.get("/v1/feedback", headers=other).json() == []

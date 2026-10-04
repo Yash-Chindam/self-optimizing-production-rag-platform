@@ -1,0 +1,4 @@
+data/** text eol=lf
+reports/** text eol=lf
+dvc.lock text eol=lf
+dvc.yaml text eol=lf
