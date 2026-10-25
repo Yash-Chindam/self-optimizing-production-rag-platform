@@ -34,7 +34,7 @@ stores = [
   "redis>=5.2,<9.0",
 ]
 embeddings = [
-  "sentence-transformers>=3.0,<6.0",
+  "sentence-transformers>=3.0,<7.0",
 ]
 # Presidio runs in-process, inside the trusted boundary. It also needs a spaCy model:
 #   python -m spacy download en_core_web_sm
@@ -64,7 +64,7 @@ orchestration = [
 # that langchain-community 0.4 removed, hence the upper bound.
 evaluation = [
   "ragas>=0.4,<0.5",
-  "langchain-community>=0.3,<0.4",
+  "langchain-community>=0.3,<0.5",
   "deepeval>=3.0,<5.0",
 ]
 # OpenTelemetry tracing in OpenInference conventions, exported over OTLP to a collector.
